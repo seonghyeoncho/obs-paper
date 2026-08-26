@@ -1,0 +1,16 @@
+{
+  "name": "obs-paper",
+  "owner": {
+    "name": "seonghyeoncho",
+    "url": "https://github.com/seonghyeoncho"
+  },
+  "description": "Academic paper workflows for Obsidian Canvas.",
+  "plugins": [
+    {
+      "name": "paper-canvas-workflow",
+      "source": "./plugins/paper-canvas-workflow",
+      "description": "Structure papers, research flows, rebuttals, and camera-ready plans in Obsidian Canvas.",
+      "version": "0.1.1"
+    }
+  ]
+}

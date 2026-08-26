@@ -1,0 +1,9 @@
+{
+  "name": "paper-canvas-workflow",
+  "description": "Structure academic papers, research flows, rebuttals, and camera-ready plans in Obsidian Canvas.",
+  "version": "0.1.1",
+  "author": {
+    "name": "seonghyeoncho",
+    "url": "https://github.com/seonghyeoncho"
+  }
+}
