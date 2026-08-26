@@ -1,0 +1,35 @@
+{
+  "name": "paper-canvas-workflow",
+  "version": "0.1.0",
+  "description": "Structure academic papers, research flows, rebuttals, and camera-ready plans in Obsidian Canvas.",
+  "author": {
+    "name": "seonghyeoncho",
+    "url": "https://github.com/seonghyeoncho"
+  },
+  "homepage": "https://github.com/seonghyeoncho/obs-paper#readme",
+  "repository": "https://github.com/seonghyeoncho/obs-paper",
+  "keywords": [
+    "academic-writing",
+    "camera-ready",
+    "obsidian-canvas",
+    "paper",
+    "rebuttal"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Obs Paper",
+    "shortDescription": "Manage academic paper workflows in Obsidian Canvas.",
+    "longDescription": "Build sentence-level manuscript layouts, research-flow graphs, reviewer rebuttal grids, and camera-ready change maps while preserving the spatial grammar of an existing Obsidian Canvas.",
+    "developerName": "seonghyeoncho",
+    "category": "Productivity",
+    "capabilities": [
+      "Write"
+    ],
+    "websiteURL": "https://github.com/seonghyeoncho/obs-paper",
+    "defaultPrompt": [
+      "Map this paper into a sentence-level Obsidian Canvas.",
+      "Organize these reviewer comments into a rebuttal workflow.",
+      "Map camera-ready changes onto paper_v2 without rewriting it."
+    ]
+  }
+}

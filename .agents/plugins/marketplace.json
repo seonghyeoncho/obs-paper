@@ -1,0 +1,20 @@
+{
+  "name": "obs-paper",
+  "interface": {
+    "displayName": "Obs Paper"
+  },
+  "plugins": [
+    {
+      "name": "paper-canvas-workflow",
+      "source": {
+        "source": "local",
+        "path": "./plugins/paper-canvas-workflow"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
