@@ -5,43 +5,37 @@ description: "Create or update the final camera-ready manuscript group in an Obs
 
 # Camera Ready
 
-Create `paper_camera_ready` as the final sentence-level manuscript view. Treat the mapped source group, normally `paper_v2`, as immutable input and apply the mapping in a new outer group.
+Create `paper_camera_ready` from the mapped source version. The final group contains the manuscript only; mapping cards remain in the planning group.
 
-## Build the final group
+## Deterministic automation
 
-- Copy only manuscript headings, prose, equations, citations, figures, tables, the nested Appendix group, and their internal reference edges.
-- Do not copy the camera-ready inventory, section lanes, Change/Add cards, Evidence/Result cards, or their mapping edges.
-- Name the outer group `paper_camera_ready` and the nested group `paper_camera_ready appendix`. Keep the Appendix below the main manuscript and fully inside the outer group.
-- Preserve source order and use the `paper` skill's sentence-card, citation, artifact, equation, hierarchy, spacing, section-title, and Appendix rules.
-- Place the new outer group beside the source with a non-overlapping gap. When mapping lanes expanded the source horizontally, restore the compact manuscript geometry instead of copying empty lane space.
+- Read `../../references/request-schema.md` before authoring a request.
+- Use `../../scripts/obs_paper.py` with workflow `camera-ready` and action `build_camera_ready`.
+- Supply the exact manuscript node, section-group, and internal-edge IDs; exclude the master list and mapping cards explicitly.
+- Supply `changes`, `additions`, and `blockers` as separate lists. The handler colors changes, additions, and blocker cards yellow.
+- When `paper_camera_ready` already exists, pass its `group_id`. The handler preserves that outer ID, removes stale contained content and incident edges, and reconciles deterministic clones instead of creating a duplicate group.
+- Run `plan`, inspect the patch, `apply` with the adjacent action log, `validate`, and rerun `plan` to confirm zero operations.
 
-## Apply mapped changes
+## Build and apply
 
-- Process every mapping item by stable ID. A `ready` or `wording` item is complete only when its promised prose, result, table, figure, caption, or definition appears at the mapped target in the final group.
-- Color every replaced or newly added manuscript node yellow (`"3"`). Preserve the original color of unchanged nodes. A changed Figure or Table is yellow too.
-- Yellow means camera-ready diff in this group. It does not mean uncertainty.
-- Keep final prose publication-ready: do not put mapping IDs, reviewer notes, strategy notes, or implementation commentary inside completed manuscript sentences.
-- Evidence tables must contain the actual reported values. Reuse verified result sources; never replace a promised table or figure with a numeric summary.
+- Copy manuscript headings, prose, citations, equations, tables, figures, Appendix content, and internal reference edges. Do not copy the master list, mapping cards, evidence-only cards, or mapping edges.
+- Use the `paper` skill's section-paired layout: main text in the left column, its supporting Appendix in the right column, and tables/figures in outside artifact lanes. Do not create `paper_camera_ready appendix` or any separate Appendix group.
+- Process every mapping card by its Canvas node ID and visible reviewer label/topic. Do not introduce `CR-*` identifiers.
+- Apply every `ready` or `wording` intervention at its exact target. A promised result is complete only when its actual prose, values, table, figure, caption, or definition appears in the final group.
+- Color every replaced or newly added manuscript node yellow (`"3"`). Preserve unchanged colors. Yellow marks a camera-ready diff, not uncertainty.
+- Keep reviewer wording, strategy notes, mapping fields, and issue labels out of publication prose.
+- Reuse verified evidence sources. Never replace a promised table or figure with selected numbers or a placeholder.
 
 ## Blocked items
 
-- Never invent missing experiments, release dates, citations, ethics facts, privacy decisions, or artifact availability.
-- If a mapped item is still blocked, keep the safest defensible source wording and add one yellow side card headed `# Author input required · CR-XX` beside the narrow target. State the exact missing fact or action and connect the blocker laterally to its target.
-- A blocked item is not counted as applied. Keep it visibly separate from the downward manuscript flow and list it in validation output.
+- Never invent experiments, release dates, citations, ethics facts, privacy decisions, or artifact availability.
+- For an unresolved item, preserve the safest source wording and add one yellow side card titled `# Author input required · <topic>` beside the exact target. Include the real reviewer label when one exists.
+- A blocked item is not completed and must remain listed in validation output.
 
-## Safe mutation and validation
+## Validation
 
-Before the first write, make one timestamped backup under `.canvas-history/` and enforce a SHA-256 precondition. Preserve all existing IDs and groups outside the new final group. Use deterministic IDs for cloned and added nodes so a rerun is idempotent.
+Before writing, make one timestamped backup and enforce a SHA-256 precondition. Use deterministic IDs so reruns are idempotent.
 
-Verify:
+Verify unique IDs, valid endpoints, exactly one `paper_camera_ready` outer group, no separate Appendix group, no mapping-only nodes, every completed mapping card represented by at least one yellow target node, every blocker represented by one yellow author-input card, `$$...$$` display equations, fitted prose and table sizes, outside artifact lanes, section-paired Appendix columns, non-overlapping section rectangles, and deterministic rerun no-op behavior.
 
-- unique node and edge IDs and valid edge endpoints;
-- exactly one outer `paper_camera_ready` group and one contained `paper_camera_ready appendix` group;
-- no mapping-only nodes or mapping edges inside the final group;
-- every completed mapping item has at least one yellow changed node at its mapped target;
-- every blocked item has one yellow author-input card and is not presented as completed evidence;
-- ordinary card width, fitted height, 20/40px spacing, section rectangles, artifact placement, and Appendix reference edges follow the `paper` skill;
-- no sibling paper group overlaps the new outer group;
-- rerunning the transform makes no further changes.
-
-Append creation, applied item IDs, blockers, layout correction, and validation results to `CANVAS_ACTION_LOG.md` with `scripts/record_action.py`.
+Log final-group creation, applied reviewer topics, blockers, layout corrections, and validation results in `CANVAS_ACTION_LOG.md`.

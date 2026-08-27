@@ -7,6 +7,15 @@ description: Build or update an academic research flow in an existing Obsidian C
 
 Treat the user's research notes and existing Obsidian Canvas as paired research artifacts. Preserve the user's spatial reasoning style; do not replace it with a new ontology or rebuild the Canvas from scratch.
 
+## Deterministic automation
+
+- Read `../../references/request-schema.md` before authoring a request.
+- Use `../../scripts/obs_paper.py` with workflow `research-flow` and action `add_research_flow` after inspecting the existing grammar.
+- Supply stable keyed nodes with exact geometry and explicit links. Use kinds `rq`, `experiment`, `answer`, `bridge`, `thought`, `source`, `table`, or `figure`.
+- Give an experiment ordered `sections` for its setup/results/control compound. The handler creates green H2 cards without internal arrows and routes outgoing flow from the final section.
+- Supply an actual `file` for a figure and the complete Markdown source for a table. The handler rejects figure placeholders.
+- Run `plan`, inspect the patch, `apply` with the adjacent action log, `validate`, and rerun `plan` to confirm zero operations.
+
 ## Start every research-flow task
 
 1. Discover candidates with `rg --files obs -g '*.canvas'`. If there is one matching paper folder, use it. If multiple candidates remain genuinely ambiguous, ask which paper is active.

@@ -7,6 +7,13 @@ description: "Organize academic peer-review material in an existing Obsidian Can
 
 Use the existing native `Rebuttal` group as a reviewer-by-reviewer working grid. Preserve the group ID and all unrelated cards. Do not rebuild the group or merge similar comments from different reviewers.
 
+## Deterministic automation
+
+- Read `../../references/request-schema.md` before authoring a request.
+- Use `../../scripts/obs_paper.py` with workflow `rebuttal` and action `layout_rebuttal`.
+- Supply one reviewer, an origin, and ordered `rows`; every row has a stable key and exactly six stage strings.
+- The handler creates or updates the 625/625/520/660/660/660 grid, preserves existing colors, top-aligns each row, uses the tallest card plus 80px for the next row, expands the existing group, and reruns as a no-op.
+
 ## Import reviewer material
 
 - When the user supplies the complete review set, split it by reviewer and preserve reviewer order, reviewer IDs, section order, numbering, scores, and confidence.

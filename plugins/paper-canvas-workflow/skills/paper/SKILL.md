@@ -5,68 +5,72 @@ description: "Create or update a sentence-level academic manuscript view inside 
 
 # Paper
 
-Treat each native `paper_vN` group as one immutable manuscript-version workspace. The repository manuscript remains the publication source of truth; the Canvas is its sentence-level reasoning and revision view.
+Treat each native `paper_vN` group as one manuscript-version workspace. The repository manuscript is the publication source of truth; the Canvas is its sentence-level reading and revision view.
 
-## Version and task groups
+## Deterministic automation
 
-- Keep versions and paper tasks in native Canvas groups. Preserve every existing group ID; never delete and recreate a group to change its layout.
-- Apply edits only to the version or task group the user names. Do not silently synchronize another version.
-- A new paper starts with empty version/task groups. Do not copy example-paper cards into it.
-- Before importing prose, preserve the manuscript's section, subsection, paragraph, sentence, table, equation, figure, citation, and reference order.
-- Treat the submission-time appendix as part of every imported paper version. Put it in a version-explicit native group such as `paper_v1 appendix` or `paper_v2 appendix`, positioned below the main manuscript but fully contained inside the corresponding outer `paper_vN` group. Do not stop the import at the bibliography or `\appendix` boundary.
+- Read `../../references/request-schema.md` before authoring a request.
+- For supported paper operations, do not edit Canvas JSON directly. Use `../../scripts/obs_paper.py` with a schema-version-1 `paper` request.
+- Run `inspect` to resolve exact node IDs, `plan` to produce a SHA-bound patch, `apply` with the adjacent action log, and `validate` after writing. A second `plan` with the same request must contain zero operations.
+- `group_appendix` requires the owning `paper_vN` group, the complete explicit member-node list, the section label, and normally 20px padding. If the computed group would capture any unlisted node, stop and correct the request rather than widening the group.
+- `insert_blocks` requires an exact anchor node, individually keyed text blocks, and the complete explicit list of downstream nodes that must move. Use `fit_group_id` when inserting into a section-owned Appendix group so its 20px boundary is recomputed. Tables and figures are not prose blocks and must wait for an outside-artifact handler.
+- Use `place_artifact`, `split_citation`, and `connect_reference` for side artifacts and explicit references; use `fit_section_title` after the section rectangle changes.
+- Use `pair_appendix_columns` for section-owned Appendix lanes, `normalize_equations` for fenced-math conversion, `move_nodes` for an explicit managed set, and `shift_sibling_group` only for a required rigid-body collision shift.
+- Every mutation request names exact node IDs. Do not infer a broad deletion or movement set from coordinates alone.
 
-## Sentence-card grammar
+## Manuscript grammar
 
-- Use exactly one prose sentence per card. A heading, display equation, Markdown table, or figure is its own non-sentence block.
-- Use one fixed width for ordinary body cards and subsection headings. Default to 812px, or retain an explicit canonical width already established by the user in that version group. A top-level section title is the exception described under Section layout.
-- Fit every ordinary card's height to its rendered text; do not use uniform fixed heights or leave avoidable blank space.
-- Use 20px as the default node gap. Keep sentences from the same paragraph 20px apart vertically and use 40px between paragraphs.
-- Tables and figures are width exceptions. Size a Markdown table to its rendered columns and preserve it verbatim in one block. Keep a figure as its own file/image card at an appropriate artifact width. Keep a complete display equation in one card even when its source contains blank lines.
-- Preserve appendix-only artifacts with the same fidelity as main-text artifacts: full result tables, captions, equations, prompt boxes, tool schemas, model/source notes, and figure panels remain complete blocks rather than summaries.
-- Preserve the text and formatting during a layout-only request. Splitting cards does not authorize rewriting, summarizing, correcting, or deleting manuscript content.
+- Preserve source order and distinguish section, subsection, paragraph, sentence, display equation, citation, table, figure, and Appendix content before laying out nodes.
+- Use one prose sentence per card in both the main text and Appendix. Fit card height to rendered text. Use 20px between sentences in one paragraph and 40px between paragraphs.
+- Use one ordinary-card width within a version, normally 812px. Headings follow the established indentation hierarchy; tables and figures are width exceptions.
+- Preserve inline LaTeX as `$...$`. Put every display equation in one card enclosed by `$$` and `$$`; never use fenced `math` code blocks.
+- Preserve manuscript wording during layout-only work. Splitting or moving cards does not authorize rewriting or summarizing them.
 
-## Citations and artifacts
+## Section-paired Appendix layout
 
-- Replace each in-prose citation command with `{}` at the exact citation position. Put the exact removed citation command in a separate side card; consolidate multiple citations from one sentence in their original order.
-- Place a citation card 20px to the side of its sentence and draw a lateral edge from the citation card to that sentence. Citation cards are ordinary gray/default cards, not part of the downward prose chain.
-- Keep every referenced Figure and Table as a separate artifact block. If the manuscript mentions an artifact that is absent from the Canvas, materialize the actual figure or full Markdown table from the manuscript source; never substitute a numeric summary or placeholder.
-- Draw an edge from each Figure/Table artifact to every sentence that explicitly mentions it. Select the nearest valid sides so a side-by-side artifact uses a lateral edge and a vertically separated artifact uses a bottom-to-top or top-to-bottom edge.
-- Place each Figure or Table at its first explicit mention, not at the start of its section. Start a parallel artifact lane at that sentence: artifact on the left, mentioning sentence and the remainder of its local paragraph stack on the right. Later mentions reuse the same artifact through additional edges.
-- Keep display equations in the ordinary downward manuscript flow. When prose explicitly references an equation, draw an edge from the complete equation block to each mentioning sentence; do not move the equation into a Figure/Table-style side lane.
-- When an edge is geometrically straight, align the connected sides by center: equal y-centers for left/right edges and equal x-centers for top/bottom edges. Offset nodes only when a curved edge is intentional.
-- When main-text prose explicitly cites an Appendix section, draw a reference edge from that sentence to the exact Appendix section title or narrower target. Because the Appendix group is below the paper, prefer sentence-bottom to target-top direction; multiple Appendix references in one sentence receive separate edges.
+- Do not create a separate Appendix group or a bottom row of Appendix columns.
+- Each top-level section owns up to two vertical text columns: main text on the left and the Appendix material supporting that section on the right. The current `paper_v1` Skill Following section, with Appendix A beside its main text, is the reference geometry.
+- Wrap each section's Appendix column and its outside artifacts in one native Canvas group labeled `<Section> · Appendix <letters>`. Keep this section-scoped group inside the owning `paper_vN` group; the prohibition above applies only to a manuscript-wide or bottom Appendix group.
+- Assign an Appendix section to the main section that explicitly references it first. If no explicit reference exists, use the section whose topic it documents. Ask only when ownership is genuinely ambiguous.
+- Keep each Appendix heading, sentence, paragraph, equation, table, figure, prompt, and schema complete and in source order. Appendix prose follows the same one-sentence and 20/40px rules as main prose.
+- Draw a lateral reference edge from a main-text Appendix mention to the exact Appendix heading or narrower target in the right column.
+- A section with no Appendix material needs no empty placeholder column.
 
-## Section layout
+## Citations, equations, tables, and figures
 
-- Preserve the established x-axis indentation hierarchy: section, subsection, paragraph heading, and body levels remain progressively indented like an outline. Never flatten these levels to one x coordinate.
-- Lay top-level manuscript sections left to right as separate section columns, with their section headers top-aligned. Within each section, the primary reading direction is downward.
-- Do not extend the main-manuscript row horizontally with Appendix columns. Place the version's nested Appendix group below the main manuscript while keeping it inside the outer `paper_vN` group, and keep visibly lettered columns such as `Appendix A · ...` inside that nested group. When another version already establishes the Appendix group's offset, bounds, and one-row or wrapped layout, reproduce that relative geometry for the new version.
-- Keep deliberately parallel cards and Figure/Table-to-prose pairs in the same row when the source layout already encodes that relation. Use 20px horizontal gaps and move later top-level sections only as far right as needed to avoid overlap.
-- Center a parallel contribution branch under its lead card: the lead card's horizontal center matches the full branch row's center, so an odd middle branch receives a straight centered arrow and the outer arrows curve symmetrically.
-- Compute each section's complete bounding rectangle after laying out all indented prose, citation cards, artifacts, and parallel branches. Space adjacent top-level sections from those rectangles, not merely from their headers or main prose columns.
-- Make each top-level section title span the full horizontal extent of that complete section rectangle: its left and right edges match the section's leftmost and rightmost managed nodes. The title therefore acts as the visible section-area header, as in the established Skill Following section.
-- Preserve existing section order and meaningful parallel rows. Spatial alignment expresses prose order; do not add arrows mechanically. Preserve manual edges unless the user asks to change their relationship.
-- Add edges only for explicit citations, Figure/Table mentions, or user-authored logical relations. When an expanded paper group would overlap a lower native group, move the lower group and all its contained nodes as one rigid body. Preserve every internal relative position, size, color, edge, and text.
-- Fit the nested Appendix group to that version's Appendix nodes, then expand the outer `paper_vN` group to contain both the complete main-manuscript area and the complete Appendix group. Never shrink the outer paper group to the main manuscript alone.
+- Replace an in-prose citation command with `{}` at the same position. Put the exact command in a grey side card and connect that card laterally to the sentence.
+- Keep display equations in their owning prose column. When prose names an equation, connect the equation card to that sentence.
+- Tables and figures never sit in the downward sentence stack. Put each artifact in an outside side lane at its first explicit mention and draw `artifact -> mentioning sentence`.
+- Prefer the outside-left lane for a main-text artifact and the outside-right lane for an Appendix artifact. Use the other free side when this avoids overlap. Later mentions reuse the same artifact through additional edges.
+- A table card contains the complete Markdown table. Set its width independently from prose: use the smallest width at which headers and numeric cells render without clipping, horizontal scrolling, or unintended wrapping. After changing width, refit height. Visually inspect the rendered Canvas and expand in 40px increments until it passes.
+- Size a figure to the actual image aspect ratio and readable labels. Do not substitute a caption, number summary, or placeholder for an available table or figure.
+- Straight lateral edges use equal y-centres; straight vertical edges use equal x-centres. Curve only to route around intentional parallel content.
 
-## Safe mutation
+## Section geometry
 
-Before the first Canvas write in a session, make one timestamped backup under `.canvas-history/`. Use a SHA-256 precondition or equivalent concurrency check before replacing Canvas JSON.
+- Lay top-level sections left to right and read each section downward. Preserve section/subsection/paragraph indentation within both text columns.
+- Keep the main and Appendix text columns parallel. Use horizontal space for their outside artifact lanes rather than inserting artifacts into either prose stack.
+- Center deliberate contribution branches beneath their lead card.
+- Compute a section rectangle from its main column, Appendix column, citations, equations, tables, figures, and branches. Adjacent sections must be spaced from these complete rectangles.
+- Make the top-level section title span the full section rectangle so it visibly marks that section's area.
+- Spatial order carries ordinary prose flow. Add arrows only for citations, explicit Figure/Table/Equation/Appendix references, or user-authored logical relations.
 
-After editing, verify:
+## Safe mutation and validation
 
-- unique node and edge IDs;
-- every edge endpoint exists;
-- ordinary text widths are consistent;
-- each prose card contains one sentence;
-- sentence and paragraph gaps follow 20/40px;
-- every removed citation has one side card and a card-to-sentence edge;
-- every available Figure/Table reference has an artifact-to-mention edge, and every unavailable referenced artifact is reported as a blocker;
-- every Figure/Table begins at its first mention row, every explicit equation reference has an equation-to-mention edge, and every straight edge is center-aligned;
-- parallel contribution rows are centered under their lead card, each top-level title spans its section rectangle, and top-level section rectangles do not overlap;
-- every source appendix section is present in order inside the correct version-specific nested group, every appendix table/figure is complete, and each explicit main-text Appendix reference has a main-text-to-Appendix edge;
-- each Appendix group is fully contained by its corresponding outer paper group; sibling outer groups and managed cards do not overlap, while this intentional parent-child containment is not treated as a collision;
-- untouched version/task groups are unchanged except for an explicitly logged rigid-body collision shift;
-- rerunning a deterministic layout transform makes no further changes.
+Preserve existing group and node IDs. Before the first Canvas write, make one timestamped backup under `.canvas-history/` and enforce a SHA-256 precondition. Move an overlapping sibling group only as one rigid body.
 
-Append the import, split, layout, group shift, validation, correction, and blocker actions to the adjacent `CANVAS_ACTION_LOG.md` with the plugin's `scripts/record_action.py`.
+Verify after editing:
+
+- unique IDs and valid edge endpoints;
+- one sentence per prose card and fitted heights;
+- 20/40px sentence and paragraph gaps;
+- every display equation uses `$$...$$`, including Appendix equations;
+- no separate Appendix group remains in a newly built version;
+- every populated Appendix column has one correctly labeled section-scoped group inside `paper_vN`;
+- each Appendix section is in its owning section's right column and in source order;
+- every citation and explicit Appendix/Equation/Figure/Table mention has the required edge;
+- every Table/Figure is outside the prose stack, at its first mention, readable at its own width, and non-overlapping;
+- section titles span complete section rectangles and sibling sections do not overlap;
+- rerunning the deterministic transform makes no further changes.
+
+Append material layout, correction, validation, and blocker actions to the adjacent `CANVAS_ACTION_LOG.md` with `scripts/record_action.py`.

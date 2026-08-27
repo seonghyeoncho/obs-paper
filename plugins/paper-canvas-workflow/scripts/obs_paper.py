@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""CLI for deterministic Obs Paper Canvas operations."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+from obs_paper_engine import (
+    PlanError,
+    PreconditionError,
+    apply_patch,
+    compile_request,
+    inspect_canvas,
+    validate_canvas,
+)
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise PlanError(f"JSON root must be an object: {path}")
+    return data
+
+
+def emit(data: dict[str, Any], output: Path | None = None) -> None:
+    text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    if output:
+        output.write_text(text, encoding="utf-8")
+    else:
+        print(text, end="")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    inspect_parser = subparsers.add_parser("inspect")
+    inspect_parser.add_argument("canvas", type=Path)
+    inspect_parser.add_argument("--group-id")
+    inspect_parser.add_argument("--group-label")
+    inspect_parser.add_argument("--output", type=Path)
+
+    plan_parser = subparsers.add_parser("plan")
+    plan_parser.add_argument("canvas", type=Path)
+    plan_parser.add_argument("request", type=Path)
+    plan_parser.add_argument("--output", type=Path)
+
+    apply_parser = subparsers.add_parser("apply")
+    apply_parser.add_argument("canvas", type=Path)
+    apply_parser.add_argument("patch", type=Path)
+    apply_parser.add_argument("--log", type=Path)
+
+    run_parser = subparsers.add_parser("run")
+    run_parser.add_argument("canvas", type=Path)
+    run_parser.add_argument("request", type=Path)
+    run_parser.add_argument("--patch-output", type=Path)
+    run_parser.add_argument("--log", type=Path)
+
+    validate_parser = subparsers.add_parser("validate")
+    validate_parser.add_argument("canvas", type=Path)
+
+    args = parser.parse_args()
+    try:
+        if args.command == "inspect":
+            target = None
+            if args.group_id or args.group_label:
+                target = {"group_id": args.group_id, "group_label": args.group_label}
+                target = {key: value for key, value in target.items() if value}
+            emit(inspect_canvas(args.canvas, target), args.output)
+        elif args.command == "plan":
+            emit(compile_request(args.canvas, read_json(args.request)), args.output)
+        elif args.command == "apply":
+            emit(apply_patch(args.canvas, read_json(args.patch), args.log))
+        elif args.command == "run":
+            patch = compile_request(args.canvas, read_json(args.request))
+            if args.patch_output:
+                emit(patch, args.patch_output)
+            emit(apply_patch(args.canvas, patch, args.log))
+        else:
+            emit(validate_canvas(args.canvas))
+    except (PlanError, PreconditionError, OSError, json.JSONDecodeError) as exc:
+        parser.error(str(exc))
+
+
+if __name__ == "__main__":
+    main()
