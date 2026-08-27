@@ -165,6 +165,25 @@ def estimate_text_height(text: str, width: int, kind: str) -> int:
     return max(70, ((40 + 20 * visual_lines + 9) // 10) * 10)
 
 
+def estimate_mapping_height(text: str, width: int, *, title: bool = False) -> int:
+    chars_per_line = max(20, (width - 30) // 8)
+    visual_lines = sum(
+        max(1, (len(line) + chars_per_line - 1) // chars_per_line)
+        for line in text.splitlines() or [""]
+    )
+    return (40 + 30 * visual_lines) if title else max(50, 30 + 20 * visual_lines)
+
+
+def dominant_reference_sides(
+    source: dict[str, Any], target: dict[str, Any]
+) -> tuple[str, str]:
+    dx = 2 * target["x"] + target["width"] - (2 * source["x"] + source["width"])
+    dy = 2 * target["y"] + target["height"] - (2 * source["y"] + source["height"])
+    if abs(dx) > abs(dy):
+        return ("right", "left") if dx > 0 else ("left", "right")
+    return ("bottom", "top") if dy > 0 else ("top", "bottom")
+
+
 def _node_operation(
     document: CanvasDocument,
     node: dict[str, Any],
@@ -654,15 +673,19 @@ def _compile_connect_reference(
         raise PlanError("connect_reference needs a key and supported kind")
     if not isinstance(target_ids, list) or not target_ids or len(target_ids) != len(set(target_ids)):
         raise PlanError("connect_reference target_ids must be a non-empty unique list")
-    if from_side not in {"top", "bottom", "left", "right"} or to_side not in {"top", "bottom", "left", "right"}:
-        raise PlanError("connect_reference sides are invalid")
+    explicit_sides = from_side is not None or to_side is not None
+    if explicit_sides and (
+        from_side not in {"top", "bottom", "left", "right"}
+        or to_side not in {"top", "bottom", "left", "right"}
+    ):
+        raise PlanError("connect_reference needs both valid sides or neither")
     if kind == "equation" and not (source.get("text", "").strip().startswith("$$") and source.get("text", "").strip().endswith("$$")):
         raise PlanError("equation references require a complete $$...$$ display block")
     target_rect = node_rect(target_group)
     targets = [document.node(node_id) for node_id in target_ids]
     if not target_rect.contains(source) or any(not target_rect.contains(target) for target in targets):
         raise PlanError("reference endpoints must be inside the target group")
-    if not action.get("curved", False):
+    if explicit_sides and not action.get("curved", False):
         for target in targets:
             if from_side in {"top", "bottom"} and 2 * source["x"] + source["width"] != 2 * target["x"] + target["width"]:
                 raise PlanError("straight vertical reference edges must be centre-aligned")
@@ -671,6 +694,9 @@ def _compile_connect_reference(
     scratch = CanvasDocument(copy.deepcopy(document.data))
     operations: list[dict[str, Any]] = []
     for target in targets:
+        edge_from_side, edge_to_side = (
+            (from_side, to_side) if explicit_sides else dominant_reference_sides(source, target)
+        )
         _append_operation(
             scratch,
             operations,
@@ -679,8 +705,8 @@ def _compile_connect_reference(
                 key_parts=[target_group["id"], "reference", key, target["id"]],
                 from_node=source["id"],
                 to_node=target["id"],
-                from_side=from_side,
-                to_side=to_side,
+                from_side=edge_from_side,
+                to_side=edge_to_side,
             ),
         )
     return operations
@@ -875,56 +901,87 @@ def _compile_map_issue(
     if action["status"] not in {"wording", "ready", "pending", "author input", "blocked"}:
         raise PlanError("unsupported mapping status")
     target_ids = action.get("target_ids")
-    if not isinstance(target_ids, list) or not target_ids or len(target_ids) != len(set(target_ids)):
-        raise PlanError("map_issue target_ids must be a non-empty unique list")
+    if not isinstance(target_ids, list) or len(target_ids) != 1:
+        raise PlanError("map_issue requires exactly one narrow manuscript target")
     target_rect = node_rect(target_group)
     targets = [document.node(node_id) for node_id in target_ids]
     if any(node.get("type") == "group" or not target_rect.contains(node) for node in targets):
         raise PlanError("map_issue targets must be non-group nodes inside the mapped paper")
-    width = action.get("width", 760)
+    width = action.get("width", 560)
     x, y = action.get("x"), action.get("y")
     if any(not isinstance(value, int) for value in (x, y, width)) or width <= 0:
         raise PlanError("map_issue x, y, and width must be integers with positive width")
-    text = (
-        f"# {action['label']}\n"
-        f"Asked: {action['asked']}\n"
-        f"Change: {action['change']}\n"
-        f"Evidence: {action['evidence']}\n"
-        f"Status: {action['status']}\n"
-        f"Done when: {action['done_when']}"
+    detail_node_ids = action.get("detail_node_ids", {})
+    detail_fields = (
+        ("asked", "Asked"),
+        ("evidence", "Evidence"),
+        ("status", "Status"),
+        ("done_when", "Done when"),
+        ("change", "Change"),
     )
+    if not isinstance(detail_node_ids, dict) or any(
+        key not in {field for field, _ in detail_fields}
+        or not isinstance(value, str)
+        or not value
+        for key, value in detail_node_ids.items()
+    ):
+        raise PlanError("map_issue detail_node_ids must map known fields to node IDs")
+    text = f"# {action['label']}"
     node_id = action.get("node_id") or deterministic_id(target_group["id"], "mapping", action["key"])
+    resolved_detail_ids = {
+        field: detail_node_ids.get(field)
+        or deterministic_id(node_id, "mapping_detail", field)
+        for field, _ in detail_fields
+    }
+    if len({node_id, *resolved_detail_ids.values()}) != 1 + len(resolved_detail_ids):
+        raise PlanError("map_issue title and detail node IDs must be unique")
     after = {
         "id": node_id,
         "type": "text",
         "x": x,
         "y": y,
         "width": width,
-        "height": action.get("height", estimate_text_height(text, width, "paragraph")),
+        "height": action.get("height", estimate_mapping_height(text, width, title=True)),
         "color": "2",
         "text": text,
     }
-    if not target_rect.contains(after):
-        raise PlanError("mapping card must remain inside the mapped paper group")
+    detail_nodes: list[dict[str, Any]] = []
+    next_y = after["y"] + after["height"] + 20
+    for field, label in detail_fields:
+        detail_text = f"{label}: {action[field]}"
+        detail = {
+            "id": resolved_detail_ids[field],
+            "type": "text",
+            "x": x,
+            "y": next_y,
+            "width": width,
+            "height": estimate_mapping_height(detail_text, width),
+            "color": "2",
+            "text": detail_text,
+        }
+        detail_nodes.append(detail)
+        next_y += detail["height"] + 10
+    if any(not target_rect.contains(node) for node in [after, *detail_nodes]):
+        raise PlanError("mapping issue cluster must remain inside the mapped paper group")
     scratch = CanvasDocument(copy.deepcopy(document.data))
     operations: list[dict[str, Any]] = []
     _append_operation(scratch, operations, _node_operation(scratch, after, target_group_id=target_group["id"]))
-    for target in targets:
-        card_center = after["x"] + after["width"] / 2
-        target_center = target["x"] + target["width"] / 2
-        from_side, to_side = (("right", "left") if card_center <= target_center else ("left", "right"))
-        _append_operation(
+    for detail in detail_nodes:
+        _append_operation(scratch, operations, _node_operation(scratch, detail, target_group_id=target_group["id"]))
+    target = targets[0]
+    from_side, to_side = dominant_reference_sides(after, target)
+    _append_operation(
+        scratch,
+        operations,
+        _edge_operation(
             scratch,
-            operations,
-            _edge_operation(
-                scratch,
-                key_parts=[target_group["id"], "mapping_edge", action["key"], target["id"]],
-                from_node=node_id,
-                to_node=target["id"],
-                from_side=from_side,
-                to_side=to_side,
-            ),
-        )
+            key_parts=[target_group["id"], "mapping_edge", action["key"], target["id"]],
+            from_node=node_id,
+            to_node=target["id"],
+            from_side=from_side,
+            to_side=to_side,
+        ),
+    )
     return operations
 
 
@@ -1197,11 +1254,7 @@ def _compile_build_camera_ready(
         raise PlanError("camera-ready source nodes must be non-groups inside the source paper")
     if any(group.get("type") != "group" or not target_rect.contains(group) for group in source_groups):
         raise PlanError("camera-ready source groups must be nested groups inside the source paper")
-    if any(
-        node.get("color") == "2"
-        and all(field in node.get("text", "") for field in ("Asked:", "Change:", "Status:"))
-        for node in source_nodes
-    ):
+    if any(node.get("color") == "2" for node in source_nodes):
         raise PlanError("camera-ready source_node_ids cannot include mapping nodes")
     if any("appendix" in group.get("label", "").lower() and "·" not in group.get("label", "") for group in source_groups):
         raise PlanError("camera-ready cannot copy a manuscript-wide Appendix group")

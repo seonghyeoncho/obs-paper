@@ -20,7 +20,7 @@ Use one JSON object:
 - `place_artifact`: `key`, `kind` (`figure` or `table`), `mention_ids`, `lane`, `width`, `height`; a figure has `file`, a table has complete Markdown `text`.
 - `pair_appendix_columns`: `sections`. Every section has `key`, `label`, `x`, `y`, and ordered `blocks` of explicit member-ID lists; optional `group_id`, `gap`, `padding`.
 - `split_citation`: `key`, `sentence_id`, exact `command`; optional `lane`, `width`, `height`, `gap`, `node_id`.
-- `connect_reference`: `key`, `kind`, `source_id`, `target_ids`, `from_side`, `to_side`; set `curved: true` when endpoints are deliberately not center-aligned.
+- `connect_reference`: `key`, `kind`, `source_id`, `target_ids`. Ports follow the dominant center-to-center axis automatically. Supply both `from_side` and `to_side` only for an intentional override; set `curved: true` when that override is not center-aligned.
 - `fit_section_title`: `title_id`, `member_ids` for the complete semantic section rectangle, excluding mapping annotations.
 - `move_nodes`: `anchor_id`, complete `node_ids`, destination `x`, `y`. The destination is absolute and rerunnable.
 - `shift_sibling_group`: sibling `group_id` and absolute `x`, `y`. The complete contained group moves rigidly.
@@ -29,7 +29,7 @@ Use one JSON object:
 ## Camera-ready mapping actions
 
 - `mapping_master`: `key`, `x`, `y`, `width`, `manuscript_node_ids`, and `items`. Each item has `reviewer`, real `label`, `topic`, and `status`.
-- `map_issue`: `key`, real reviewer/topic `label`, `asked`, `change`, `evidence`, `status`, `done_when`, `target_ids`, `x`, `y`; optional `node_id`, `width`, `height`.
+- `map_issue`: `key`, real reviewer/topic `label`, `asked`, `change`, `evidence`, `status`, `done_when`, one-element `target_ids`, `x`, `y`; optional title `node_id`, per-field `detail_node_ids`, `width`, and title `height`. It creates one orange title node followed by separate Asked, Evidence, Status, Done when, and Change nodes; only the title connects to the manuscript target.
 - `remove_items`: explicit `node_ids` and `edge_ids`. Include every edge incident to a removed node.
 
 Allowed mapping statuses are `wording`, `ready`, `pending`, `author input`, and `blocked`.

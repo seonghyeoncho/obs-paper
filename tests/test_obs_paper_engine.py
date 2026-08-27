@@ -223,17 +223,50 @@ class ObsPaperEngineTest(unittest.TestCase):
                     "target_ids": ["target"],
                     "x": 1000,
                     "y": 600,
-                    "width": 760,
                 }],
             }
             patch = compile_request(canvas, mapping_request)
             apply_patch(canvas, patch)
             document = CanvasDocument.load(canvas)
-            card = next(node for node in document.nodes if node.get("text", "").startswith("# R3 · W3"))
-            self.assertEqual(card["color"], "2")
-            self.assertNotIn("CR-", card["text"])
+            cluster = sorted(
+                [
+                    node
+                    for node in document.nodes
+                    if node.get("color") == "2" and node["x"] == 1000
+                ],
+                key=lambda node: node["y"],
+            )
+            self.assertEqual(
+                [node["text"].split(":", 1)[0] for node in cluster],
+                ["# R3 · W3 · Human audit reliability", "Asked", "Evidence", "Status", "Done when", "Change"],
+            )
+            self.assertTrue(all(node["width"] == 560 for node in cluster))
+            self.assertEqual(cluster[1]["y"] - cluster[0]["y"] - cluster[0]["height"], 20)
+            self.assertTrue(
+                all(cluster[index + 1]["y"] - cluster[index]["y"] - cluster[index]["height"] == 10 for index in range(1, 5))
+            )
+            self.assertNotIn("CR-", cluster[0]["text"])
             self.assertEqual(document.node("target")["text"], "Original manuscript sentence.")
-            self.assertTrue(any(edge["fromNode"] == card["id"] and edge["toNode"] == "target" for edge in document.edges))
+            issue_edges = [edge for edge in document.edges if edge["fromNode"] in {node["id"] for node in cluster}]
+            self.assertEqual(len(issue_edges), 1)
+            self.assertEqual((issue_edges[0]["fromNode"], issue_edges[0]["toNode"]), (cluster[0]["id"], "target"))
+            self.assertEqual(compile_request(canvas, mapping_request)["operations"], [])
+
+    def test_mapping_issue_requires_one_narrow_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = self.write_canvas(Path(directory), fixture_canvas())
+            bad = {
+                "schema_version": 1,
+                "workflow": "camera-ready-mapping",
+                "target": {"group_label": "paper_v1"},
+                "actions": [{
+                    "op": "map_issue", "key": "wide", "label": "R1 · W1", "asked": "A",
+                    "change": "B", "evidence": "C", "status": "ready", "done_when": "D",
+                    "target_ids": ["b", "c"], "x": 100, "y": 600,
+                }],
+            }
+            with self.assertRaisesRegex(PlanError, "exactly one"):
+                compile_request(canvas, bad)
 
     def test_mapping_issue_rejects_invented_cr_label(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -413,6 +446,31 @@ class ObsPaperEngineTest(unittest.TestCase):
             edge = next(edge for edge in CanvasDocument.load(canvas).edges if edge["fromNode"] == "eq")
             self.assertEqual((edge["fromSide"], edge["toSide"]), ("bottom", "top"))
             self.assertEqual(compile_request(canvas, equation_request)["operations"], [])
+
+    def test_connect_reference_infers_ports_from_dominant_axis(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = fixture_canvas()
+            data["nodes"].extend([
+                {"id": "source", "type": "text", "x": 100, "y": 700, "width": 500, "height": 70, "text": "See the Appendix."},
+                {"id": "side", "type": "text", "x": 1800, "y": 900, "width": 800, "height": 70, "text": "# Appendix D"},
+                {"id": "below", "type": "text", "x": 200, "y": 1800, "width": 800, "height": 70, "text": "# Appendix E"},
+            ])
+            canvas = self.write_canvas(Path(directory), data)
+            reference_request = {
+                "schema_version": 1,
+                "workflow": "paper",
+                "target": {"group_label": "paper_v1"},
+                "actions": [
+                    {"op": "connect_reference", "key": "side", "kind": "appendix", "source_id": "source", "target_ids": ["side"]},
+                    {"op": "connect_reference", "key": "below", "kind": "appendix", "source_id": "source", "target_ids": ["below"]},
+                ],
+            }
+            patch = compile_request(canvas, reference_request)
+            apply_patch(canvas, patch)
+            edges = {edge["toNode"]: edge for edge in CanvasDocument.load(canvas).edges}
+            self.assertEqual((edges["side"]["fromSide"], edges["side"]["toSide"]), ("right", "left"))
+            self.assertEqual((edges["below"]["fromSide"], edges["below"]["toSide"]), ("bottom", "top"))
+            self.assertEqual(compile_request(canvas, reference_request)["operations"], [])
 
     def test_fit_section_title_spans_explicit_section_rectangle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

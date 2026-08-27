@@ -33,7 +33,7 @@ Treat each native `paper_vN` group as one manuscript-version workspace. The repo
 - Wrap each section's Appendix column and its outside artifacts in one native Canvas group labeled `<Section> · Appendix <letters>`. Keep this section-scoped group inside the owning `paper_vN` group; the prohibition above applies only to a manuscript-wide or bottom Appendix group.
 - Assign an Appendix section to the main section that explicitly references it first. If no explicit reference exists, use the section whose topic it documents. Ask only when ownership is genuinely ambiguous.
 - Keep each Appendix heading, sentence, paragraph, equation, table, figure, prompt, and schema complete and in source order. Appendix prose follows the same one-sentence and 20/40px rules as main prose.
-- Draw a lateral reference edge from a main-text Appendix mention to the exact Appendix heading or narrower target in the right column.
+- Draw a reference edge from a main-text Appendix mention to the exact Appendix heading or narrower target in the right column. When the target is predominantly beside the source, start and end at their facing side ports; use vertical ports only when the target is predominantly above or below.
 - A section with no Appendix material needs no empty placeholder column.
 
 ## Citations, equations, tables, and figures
@@ -44,7 +44,7 @@ Treat each native `paper_vN` group as one manuscript-version workspace. The repo
 - Prefer the outside-left lane for a main-text artifact and the outside-right lane for an Appendix artifact. Use the other free side when this avoids overlap. Later mentions reuse the same artifact through additional edges.
 - A table card contains the complete Markdown table. Set its width independently from prose: use the smallest width at which headers and numeric cells render without clipping, horizontal scrolling, or unintended wrapping. After changing width, refit height. Visually inspect the rendered Canvas and expand in 40px increments until it passes.
 - Size a figure to the actual image aspect ratio and readable labels. Do not substitute a caption, number summary, or placeholder for an available table or figure.
-- Straight lateral edges use equal y-centres; straight vertical edges use equal x-centres. Curve only to route around intentional parallel content.
+- Choose reference ports by the dominant center-to-center axis: horizontal displacement uses facing left/right ports, while vertical displacement uses top/bottom ports. This paper-reference routing is independent of the research-flow convention that reserves side-origin arrows for red thought nodes. Straight lateral edges use equal y-centres; straight vertical edges use equal x-centres. Curve only to route around intentional parallel content.
 
 ## Section geometry
 

@@ -97,6 +97,8 @@ Supported block kinds are `sentence`, `paragraph`, `heading`, and `equation`. Us
 
 Every destructive migration uses explicit node and edge IDs. `remove_items` rejects deletion when an incident edge is missing from the request. `build_camera_ready` can reuse an existing final-group ID, remove stale contained content, exclude mapping cards, and apply yellow changes, additions, and author-input blockers.
 
+`map_issue` produces a compact orange cluster: one title plus separate Asked, Evidence, Status, Done when, and Change nodes. It accepts exactly one manuscript target and connects only the title. Paper references infer left/right or top/bottom ports from the dominant geometric direction.
+
 ```bash
 python plugins/paper-canvas-workflow/scripts/obs_paper.py inspect paper.canvas --group-label paper_v1
 python plugins/paper-canvas-workflow/scripts/obs_paper.py plan paper.canvas request.json --output patch.json
