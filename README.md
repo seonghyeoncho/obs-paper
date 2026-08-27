@@ -2,12 +2,13 @@
 
 Obs Paper is a Codex plugin for managing academic-paper workflows in an existing [Obsidian Canvas](https://obsidian.md/canvas).
 
-It provides four skills:
+It provides five skills:
 
 - `paper`: sentence-level manuscript layout inside versioned paper groups
 - `research-flow`: RQ, experiment, evidence, and interpretation graphs
 - `rebuttal`: reviewer comments organized from source text through final English response
 - `camera-ready-mapping`: non-destructive mapping from rebuttal promises to manuscript targets
+- `camera-ready`: final manuscript generation from a completed mapping, with yellow diff nodes and explicit blockers
 
 ## Install in Codex
 
