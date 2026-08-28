@@ -44,7 +44,7 @@ Allowed mapping statuses are `wording`, `ready`, `pending`, `author input`, and 
 
 ## Rebuttal action
 
-`layout_rebuttal` requires `reviewer`, `x`, `y`, and ordered `rows`. Every row has a stable `key` and exactly six `stages` in English, Korean, memo, Korean rebuttal, English draft, and English final order.
+`layout_rebuttal` requires `reviewer`, `x`, `y`, and ordered `rows`. Every row has a stable `key`, a `kind` (`weakness`, `strength`, `strong`, `props`, `suggestion`, or `neutral`), and exactly six `stages` in English, Korean, memo, Korean rebuttal, English draft, and English final order. Weakness rows color the English and Korean review cards red, strength/strong/props rows green, and suggestion rows yellow. The six stages run horizontally; reviewer items stack vertically.
 
 ## Research-flow action
 

@@ -17,6 +17,7 @@ from obs_paper_engine import (  # noqa: E402
     apply_patch,
     compile_request,
     deterministic_id,
+    inspect_canvas,
     node_rect,
 )
 
@@ -296,6 +297,7 @@ class ObsPaperEngineTest(unittest.TestCase):
                 "actions": [{
                     "op": "layout_rebuttal",
                     "reviewer": "R1: ABC",
+                    "kind": "weakness",
                     "key": "r1-w1",
                     "x": 100,
                     "y": 600,
@@ -311,6 +313,7 @@ class ObsPaperEngineTest(unittest.TestCase):
             self.assertEqual([node["width"] for node in cards], [625, 625, 520, 660, 660, 660])
             self.assertEqual([cards[i + 1]["x"] - cards[i]["x"] - cards[i]["width"] for i in range(5)], [73, 55, 160, 20, 40])
             self.assertEqual(len({node["y"] for node in cards}), 1)
+            self.assertEqual([node.get("color") for node in cards], ["1", "1", None, None, None, None])
 
     def test_research_flow_assigns_colors_and_bottom_top_edges(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -598,7 +601,10 @@ class ObsPaperEngineTest(unittest.TestCase):
                     "reviewer": "R1: ABC",
                     "x": 100,
                     "y": 600,
-                    "rows": [{"key": "w1", "stages": stages1}, {"key": "w2", "stages": stages2}],
+                    "rows": [
+                        {"key": "w1", "kind": "strength", "stages": stages1},
+                        {"key": "w2", "kind": "suggestion", "stages": stages2},
+                    ],
                 }],
             }
             patch = compile_request(canvas, rebuttal_request)
@@ -607,7 +613,17 @@ class ObsPaperEngineTest(unittest.TestCase):
             first = [document.node(deterministic_id("paper", "rebuttal_stage", "w1", str(i))) for i in range(6)]
             second = [document.node(deterministic_id("paper", "rebuttal_stage", "w2", str(i))) for i in range(6)]
             self.assertEqual(second[0]["y"], first[0]["y"] + max(node["height"] for node in first) + 80)
+            self.assertEqual([node.get("color") for node in first[:2]], ["4", "4"])
+            self.assertEqual([node.get("color") for node in second[:2]], ["3", "3"])
             self.assertEqual(compile_request(canvas, rebuttal_request)["operations"], [])
+
+    def test_inspect_accepts_empty_rebuttal_placeholders(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = fixture_canvas()
+            data["nodes"].append({"id": "empty", "type": "text", "x": 100, "y": 600, "width": 660, "height": 70, "text": ""})
+            canvas = self.write_canvas(Path(directory), data)
+            inspected = inspect_canvas(canvas)
+            self.assertEqual(next(node for node in inspected["nodes"] if node["id"] == "empty")["text"], "")
 
     def test_research_flow_compound_experiment_has_sections_without_internal_edges_and_real_figure(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -1049,26 +1049,29 @@ def _compile_layout_rebuttal(
     reviewer = action.get("reviewer")
     rows = action.get("rows")
     if rows is None:
-        rows = [{"key": action.get("key"), "stages": action.get("stages")}]
+        rows = [{"key": action.get("key"), "kind": action.get("kind", "neutral"), "stages": action.get("stages")}]
     if not isinstance(rows, list) or not rows:
         raise PlanError("layout_rebuttal needs at least one row")
     for row in rows:
         stages = row.get("stages") if isinstance(row, dict) else None
+        kind = row.get("kind", "neutral") if isinstance(row, dict) else None
         if (
             not isinstance(row, dict)
             or not isinstance(row.get("key"), str)
             or not row["key"]
+            or kind not in {"neutral", "weakness", "strength", "strong", "props", "suggestion"}
             or not isinstance(stages, list)
             or len(stages) != 6
             or any(not isinstance(text, str) for text in stages)
         ):
-            raise PlanError("each rebuttal row needs a key and exactly six stage strings")
+            raise PlanError("each rebuttal row needs a supported kind, a key, and exactly six stage strings")
     x, y = action.get("x"), action.get("y")
     if not isinstance(reviewer, str) or not reviewer:
         raise PlanError("layout_rebuttal needs a reviewer")
     if not isinstance(x, int) or not isinstance(y, int):
         raise PlanError("layout_rebuttal x and y must be integers")
     widths, gaps = [625, 625, 520, 660, 660, 660], [73, 55, 160, 20, 40]
+    review_colors = {"weakness": "1", "strength": "4", "strong": "4", "props": "4", "suggestion": "3"}
     scratch = CanvasDocument(copy.deepcopy(document.data))
     operations: list[dict[str, Any]] = []
     header_id = deterministic_id(target_group["id"], "rebuttal_header", reviewer)
@@ -1090,6 +1093,8 @@ def _compile_layout_rebuttal(
                 "height": estimate_text_height(text, width, "paragraph"),
                 "text": text,
             })
+            if index < 2 and row.get("kind", "neutral") in review_colors:
+                after["color"] = review_colors[row.get("kind", "neutral")]
             _append_operation(scratch, operations, _node_operation(scratch, after, target_group_id=target_group["id"]))
             row_ids.append(node_id)
             cursor_x += width + (gaps[index] if index < len(gaps) else 0)
@@ -1712,7 +1717,7 @@ def inspect_canvas(canvas: Path, target: dict[str, Any] | None = None) -> dict[s
                 "width": node["width"],
                 "height": node["height"],
                 **({"label": node["label"]} if "label" in node else {}),
-                **({"text": node["text"].splitlines()[0]} if "text" in node else {}),
+                **({"text": node["text"].splitlines()[0] if node["text"].splitlines() else ""} if "text" in node else {}),
                 **({"file": node["file"]} if "file" in node else {}),
             }
             for node in nodes

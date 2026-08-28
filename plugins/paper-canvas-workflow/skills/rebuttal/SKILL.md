@@ -11,14 +11,15 @@ Use the existing native `Rebuttal` group as a reviewer-by-reviewer working grid.
 
 - Read `../../references/request-schema.md` before authoring a request.
 - Use `../../scripts/obs_paper.py` with workflow `rebuttal` and action `layout_rebuttal`.
-- Supply one reviewer, an origin, and ordered `rows`; every row has a stable key and exactly six stage strings.
-- The handler creates or updates the 625/625/520/660/660/660 grid, preserves existing colors, top-aligns each row, uses the tallest card plus 80px for the next row, expands the existing group, and reruns as a no-op.
+- Supply one reviewer, an origin, and ordered `rows`; every row has a stable key, a review kind, and exactly six stage strings.
+- The handler creates or updates the 625/625/520/660/660/660 grid, applies review-category colors while preserving later-stage colors, top-aligns each row, uses the tallest card plus 80px for the next row, expands the existing group, and reruns as a no-op.
 
 ## Import reviewer material
 
 - When the user supplies the complete review set, split it by reviewer and preserve reviewer order, reviewer IDs, section order, numbering, scores, and confidence.
 - Use one reviewer header such as `# R1: KvNE03`. Keep Paper Summary, strengths, weaknesses, comments/suggestions, and evaluation metadata distinct.
 - Treat each independently answerable weakness or comment as one row. Do not combine items merely because one rebuttal could mention both.
+- Classify every row as `weakness`, `strength` (also accepting `strong` or `props`), `suggestion`, or `neutral` before layout.
 - Keep the first-column English text verbatim apart from unavoidable Canvas formatting. The second column is a faithful Korean translation, not a summary.
 - If the input is partial, organize only what was supplied and mark the reviewer block as incomplete rather than inferring missing review text.
 
@@ -41,10 +42,11 @@ Use the completed R1 block in the current Skill Following Canvas as the referenc
 
 - Column widths are fixed at `625, 625, 520, 660, 660, 660` pixels in the six-stage order.
 - Starting from the English column, use fixed inter-column gaps of `73, 55, 160, 20, 40` pixels. The 160px gap separates analysis from the rebuttal-writing cluster.
+- Lay the six stages out horizontally. Stack one reviewer's independently answerable items vertically in their original order.
 - Top-align all cards belonging to the same reviewer item. Fit each card height to its rendered text, then place the next row below the tallest card in the current row with an 80px gap.
 - Keep reviewer headers 200×50px and place the first content row 80px below the header. Reviewer blocks remain spatially separate; expand the existing group rather than compressing or overlapping them.
 - Use spatial alignment, not arrows, to express the six-stage progression. A lateral arrow may connect the Korean reviewer item to its memo when the memo directly answers that item; do not chain translation, Korean rebuttal, draft, and final with arrows.
-- Preserve existing colors. Column position carries stage meaning; do not invent a new color taxonomy. Empty placeholders remain uncoloured.
+- Color both reviewer-content cards (English and Korean) by row kind: weakness is red (`1`), strength/strong/props is green (`4`), and suggestion is yellow (`3`). Neutral rows remain uncoloured. Preserve existing memo and rebuttal-stage colors; empty placeholders remain uncoloured.
 
 ## Rebuttal content rules
 
