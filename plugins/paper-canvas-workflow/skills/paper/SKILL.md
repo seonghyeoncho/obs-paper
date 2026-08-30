@@ -71,7 +71,8 @@ After importing or reconstructing a paper version, run `normalize_paper_colors` 
 ## Citations, equations, tables, and figures
 
 - Promote citations from the research-flow literature mapping: the cited item must already belong to the project Zotero Collection, exist in `references.bib`, and have a linked per-paper Canvas. Connect the citation card to the narrowest manuscript sentence supported by that literature; do not bulk-import every collected paper into the manuscript.
-- Replace an in-prose citation command with `{}` at the same position. Put the exact command in a grey side card and connect that card laterally to the sentence.
+- A citation is a grey side card holding the command as `~\cite{key}`, connected to the sentence it supports. Like every side card it originates the edge and points into the prose, the same direction a table or figure does. `paper_tex.py` folds the command into that sentence and drops the card, so the command never sits in the prose itself.
+- Where the citation belongs mid-sentence, put `{}` in the prose at that position and the command lands there. With no placeholder it lands at the end, inside the closing full stop, which is where a citation usually goes.
 - Keep display equations in their owning prose column. When prose names an equation, connect the equation card to that sentence.
 - Tables and figures never sit in the downward sentence stack. Put each artifact in an outside side lane at its first explicit mention and draw `artifact -> mentioning sentence`.
 - Prefer the outside-left lane for a main-text artifact and the outside-right lane for an Appendix artifact. Use the other free side when this avoids overlap. Later mentions reuse the same artifact through additional edges.

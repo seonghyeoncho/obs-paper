@@ -49,6 +49,9 @@ NODE_ID = re.compile(r"\n*`[0-9a-f]{16}`\s*$")
 HEADING = re.compile(r"^#\s+(.*)$")
 BOLD = re.compile(r"\*\*(.+?)\*\*")
 ARTIFACT = re.compile(r"^\*\*(Table|Figure)\s+(\d+)\*\*\s*[:.]?\s*(.*)$", re.S)
+CITATION = re.compile(r"~?\\cite[tp]?(?:\[[^\]]*\])?\{[^}]+\}")
+# The placeholder is matched after escaping, where `{}` has become `\{\}`.
+PLACEHOLDER = r"\{\}"
 
 
 class TexError(RuntimeError):
@@ -69,18 +72,49 @@ def strip_id(text: str) -> str:
     return NODE_ID.sub("", text).strip()
 
 
-def load_group(canvas: Path, label: str) -> list[dict[str, Any]]:
+def load_group(canvas: Path, label: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     data = json.loads(canvas.read_text(encoding="utf-8"))
     groups = [n for n in data["nodes"] if n.get("type") == "group" and n.get("label") == label]
     if len(groups) != 1:
         raise TexError(f"expected exactly one group labelled {label!r}, found {len(groups)}")
     g = groups[0]
-    return [
+    nodes = [
         n for n in data["nodes"]
         if n.get("type") != "group"
         and g["x"] <= n["x"] < g["x"] + g["width"]
         and g["y"] <= n["y"] < g["y"] + g["height"]
     ]
+    inside = {n["id"] for n in nodes}
+    edges = [
+        e for e in data.get("edges", [])
+        if e.get("fromNode") in inside and e.get("toNode") in inside
+    ]
+    return nodes, edges
+
+
+def collect_citations(
+    nodes: list[dict[str, Any]], edges: list[dict[str, Any]]
+) -> tuple[dict[str, list[str]], set[str]]:
+    r"""Map each cited sentence to the commands aimed at it.
+
+    A citation is a grey side card holding `~\cite{key}`, and like every side
+    card it originates its edge and points at what it supports. The card is
+    consumed rather than printed, and its text is passed through unescaped
+    because it is already LaTeX.
+    """
+    by_id = {n["id"]: n for n in nodes}
+    cited: dict[str, list[str]] = {}
+    consumed: set[str] = set()
+    for edge in edges:
+        source = by_id.get(edge["fromNode"])
+        if source is None or source.get("color") or source.get("type") != "text":
+            continue
+        commands = CITATION.findall(strip_id(source.get("text", "")))
+        if not commands:
+            continue
+        cited.setdefault(edge["toNode"], []).extend(commands)
+        consumed.add(source["id"])
+    return cited, consumed
 
 
 def reading_order(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -121,7 +155,23 @@ def markdown_table(body: str) -> tuple[str, bool]:
     return "\n".join(lines), widest > COLUMN_CHARS
 
 
-def render(nodes: list[dict[str, Any]]) -> str:
+def apply_citations(escaped: str, commands: list[str]) -> str:
+    """Put each command at its placeholder, or after the sentence if none."""
+    for command in commands:
+        command = command if command.startswith("~") else "~" + command
+        if PLACEHOLDER in escaped:
+            escaped = escaped.replace(PLACEHOLDER, command, 1)
+        else:
+            escaped = escaped.rstrip()
+            tail = ""
+            while escaped and escaped[-1] in ".?!\u201d\")":
+                tail, escaped = escaped[-1] + tail, escaped[:-1]
+            escaped = escaped + command + tail
+    return escaped
+
+
+def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = None,
+           consumed: set[str] | None = None) -> str:
     out: list[str] = []
     paragraph: list[str] = []
     pending_figure: tuple[str, bool] | None = None
@@ -137,7 +187,12 @@ def render(nodes: list[dict[str, Any]]) -> str:
             out.append("")
             paragraph = []
 
+    cited = cited or {}
+    consumed = consumed or set()
+
     for node in nodes:
+        if node["id"] in consumed:
+            continue  # a citation card is folded into the sentence it supports
         if node.get("type") == "file":
             flush()
             # A figure keeps the Canvas card's aspect ratio, so the card itself
@@ -215,7 +270,10 @@ def render(nodes: list[dict[str, Any]]) -> str:
         gap = node["y"] - (prev["y"] + prev["height"]) if prev and prev["x"] == node["x"] else None
         if gap is None or gap >= PARAGRAPH_GAP:
             flush()
-        paragraph.append(escape(" ".join(text.split())))
+        sentence = escape(" ".join(text.split()))
+        if node["id"] in cited:
+            sentence = apply_citations(sentence, cited[node["id"]])
+        paragraph.append(sentence)
         prev = node
 
     flush()
@@ -225,7 +283,9 @@ def render(nodes: list[dict[str, Any]]) -> str:
 
 
 def build(canvas: Path, label: str = "paper_v1") -> str:
-    return render(reading_order(load_group(canvas, label)))
+    nodes, edges = load_group(canvas, label)
+    cited, consumed = collect_citations(nodes, edges)
+    return render(reading_order(nodes), cited, consumed)
 
 
 def main() -> None:
