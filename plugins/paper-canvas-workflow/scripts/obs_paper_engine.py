@@ -158,6 +158,15 @@ def bounding_rect(nodes: list[dict[str, Any]], padding: int) -> Rect:
 
 _TABLE_RULE = re.compile(r"^\|[\s:|-]+\|$")
 
+# Uncoloured cards that sit beside the flow. They originate their edge and point
+# into the flow: the card being referred to aims at the card that refers to it.
+# The red `thought` card is the only reverse case; it aims at what it questions.
+RESEARCH_FLOW_SIDE_KINDS = frozenset({"source", "table", "figure", "implementation", "params"})
+
+# Experiment section headings carry the section type alone. Status, configuration,
+# and scoring parameters belong in the experiment title or an implementation card.
+RESEARCH_FLOW_SECTION_HEADINGS = frozenset({"Setup", "Results", "Control", "Sanity/Control"})
+
 
 def display_width(text: str) -> int:
     """Rendered width in half-widths; CJK glyphs occupy two."""
@@ -1312,14 +1321,16 @@ def _compile_add_research_flow(
     target_rect = node_rect(target_group)
     for spec in specs:
         kind, text = spec.get("kind"), spec.get("text")
-        if kind not in {*colors, "source", "table", "figure"} or not isinstance(text, str) or not text.strip():
+        if kind not in {*colors, *RESEARCH_FLOW_SIDE_KINDS} or not isinstance(text, str) or not text.strip():
             raise PlanError("invalid research-flow node kind or text")
         node_id = spec.get("node_id") or deterministic_id(target_group["id"], "research_flow", spec["key"])
         width = spec.get("width", 812)
         x, y = spec.get("x"), spec.get("y")
         if any(not isinstance(value, int) for value in (x, y, width)) or width <= 0:
             raise PlanError("research-flow node geometry must use integers")
-        rendered_text = text if kind in {"bridge", "thought", "source", "table", "figure"} or text.startswith("#") else f"# {text}"
+        rendered_text = (
+            text if kind in {"bridge", "thought", *RESEARCH_FLOW_SIDE_KINDS} or text.startswith("#") else f"# {text}"
+        )
         if kind == "figure":
             if not isinstance(spec.get("file"), str) or not spec["file"]:
                 raise PlanError("research-flow figures need a file")
@@ -1364,6 +1375,12 @@ def _compile_add_research_flow(
                     or not isinstance(section.get("text"), str)
                 ):
                     raise PlanError("experiment sections need key, heading, and text")
+                if section["heading"] not in RESEARCH_FLOW_SECTION_HEADINGS:
+                    raise PlanError(
+                        f"experiment section heading must be one of "
+                        f"{sorted(RESEARCH_FLOW_SECTION_HEADINGS)}, got {section['heading']!r}; "
+                        "status and configuration belong in the experiment title or an implementation card"
+                    )
                 section_key = f"{spec['key']}:{section['key']}"
                 if section_key in entry_ids:
                     raise PlanError("experiment section keys must be unique")
@@ -1390,9 +1407,14 @@ def _compile_add_research_flow(
     for link in links:
         if not isinstance(link, list) or len(link) != 2 or link[0] not in exit_ids or link[1] not in entry_ids:
             raise PlanError("research-flow links must contain two known keys")
+        if kinds[link[1]] in RESEARCH_FLOW_SIDE_KINDS and kinds[link[0]] not in RESEARCH_FLOW_SIDE_KINDS:
+            raise PlanError(
+                f"research-flow side card '{link[1]}' must originate its link, not receive it; "
+                f"write [\"{link[1]}\", \"{link[0]}\"]"
+            )
         if kinds[link[0]] == "thought":
             side, target_side = "right", "left"
-        elif kinds[link[0]] == "source":
+        elif kinds[link[0]] in RESEARCH_FLOW_SIDE_KINDS:
             side, target_side = dominant_reference_sides(scratch.node(exit_ids[link[0]]), scratch.node(entry_ids[link[1]]))
         else:
             side, target_side = "bottom", "top"
