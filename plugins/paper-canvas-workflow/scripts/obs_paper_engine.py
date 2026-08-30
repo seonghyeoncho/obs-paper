@@ -161,7 +161,9 @@ _TABLE_RULE = re.compile(r"^\|[\s:|-]+\|$")
 # Uncoloured cards that sit beside the flow. They originate their edge and point
 # into the flow: the card being referred to aims at the card that refers to it.
 # The red `thought` card is the only reverse case; it aims at what it questions.
-RESEARCH_FLOW_SIDE_KINDS = frozenset({"source", "table", "figure", "implementation", "params"})
+# `log` records a run that produced no usable evidence; its measurements are
+# discarded rather than kept, so it never becomes a green experiment.
+RESEARCH_FLOW_SIDE_KINDS = frozenset({"source", "table", "figure", "implementation", "params", "log"})
 
 # Experiment section headings carry the section type alone. Status, configuration,
 # and scoring parameters belong in the experiment title or an implementation card.
