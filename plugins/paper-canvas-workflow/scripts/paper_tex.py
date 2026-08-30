@@ -377,7 +377,7 @@ def main() -> None:
         print(f"warning: {line}", file=sys.stderr)
     if args.out:
         args.out.write_text(body, encoding="utf-8")
-        print(f"{args.out} ({len(body)} bytes)")
+        print(f"{args.out} ({args.out.stat().st_size} bytes)")
     else:
         print(body, end="")
 

@@ -43,6 +43,7 @@ def _metadata(name: str, repository: Path | None) -> str:
         'zotero_collection: ""\n'
         'overleaf_project: ""\n'
         'overleaf_template: ""\n'
+        'overleaf_body: ""\n'
         "---\n\n"
         f"# {name}\n"
     )
