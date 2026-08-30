@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Assemble a LaTeX body from a paper_vN Canvas group.
+
+Emits a body fragment, never a whole document. The template owns the preamble,
+author block, and bibliography; the Canvas owns prose, headings, and artifacts.
+Keeping them in separate files means a push replaces only the generated file and
+leaves what co-authors edit alone.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+COLUMN_TOLERANCE = 100
+PARAGRAPH_GAP = 30  # 20px keeps a paragraph together, 40px starts a new one
+
+# A single ACL column fits roughly this many characters at 11pt. An artifact
+# wider than that has to span both columns or it overprints the text beside it.
+COLUMN_CHARS = 58
+WIDE_ASPECT = 1.8
+
+# Greek and maths symbols are written as plain characters in the Canvas, where
+# they render fine. pdflatex needs them in maths mode.
+SYMBOLS = {
+    "θ": r"$\theta$", "φ": r"$\varphi$", "Δ": r"$\Delta$", "κ": r"$\kappa$",
+    "×": r"$\times$", "−": "$-$", "≤": r"$\leq$", "≥": r"$\geq$", "≈": r"$\approx$",
+    "→": r"$\rightarrow$", "±": r"$\pm$", "<": "$<$", ">": "$>$",
+}
+ESCAPES = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#",
+           "_": r"\_", "{": r"\{", "}": r"\}", "~": r"\textasciitilde{}", "^": r"\textasciicircum{}"}
+
+NODE_ID = re.compile(r"\n*`[0-9a-f]{16}`\s*$")
+HEADING = re.compile(r"^#\s+(?:(\d+(?:\.\d+)*)\s+)?(.*)$")
+BOLD = re.compile(r"\*\*(.+?)\*\*")
+ARTIFACT = re.compile(r"^\*\*(Table|Figure)\s+(\d+)\*\*\s*[:.]?\s*(.*)$", re.S)
+
+
+class TexError(RuntimeError):
+    pass
+
+
+def escape(text: str) -> str:
+    """Escape LaTeX specials, then lift bold and loose symbols back out."""
+    out = "".join(ESCAPES.get(ch, ch) for ch in text)
+    out = out.replace(r"\{\{", "{{").replace(r"\}\}", "}}")
+    for raw, tex in SYMBOLS.items():
+        out = out.replace(raw, tex)
+    # \*\*x\*\* survived escaping as literal asterisks; turn it into \textbf
+    return re.sub(r"\*\*(.+?)\*\*", r"\\textbf{\1}", out)
+
+
+def strip_id(text: str) -> str:
+    return NODE_ID.sub("", text).strip()
+
+
+def load_group(canvas: Path, label: str) -> list[dict[str, Any]]:
+    data = json.loads(canvas.read_text(encoding="utf-8"))
+    groups = [n for n in data["nodes"] if n.get("type") == "group" and n.get("label") == label]
+    if len(groups) != 1:
+        raise TexError(f"expected exactly one group labelled {label!r}, found {len(groups)}")
+    g = groups[0]
+    return [
+        n for n in data["nodes"]
+        if n.get("type") != "group"
+        and g["x"] <= n["x"] < g["x"] + g["width"]
+        and g["y"] <= n["y"] < g["y"] + g["height"]
+    ]
+
+
+def reading_order(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Sections run left to right; each column reads downward."""
+    columns: list[int] = []
+    for x in sorted(n["x"] for n in nodes):
+        if not columns or x - columns[-1] > COLUMN_TOLERANCE:
+            columns.append(x)
+    def key(n: dict[str, Any]) -> tuple[int, int]:
+        col = max(i for i, c in enumerate(columns) if n["x"] >= c)
+        return (col, n["y"])
+    return sorted(nodes, key=key)
+
+
+def display_width(text: str) -> int:
+    import unicodedata
+
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in text)
+
+
+def markdown_table(body: str) -> tuple[str, bool]:
+    """Return the tabular and whether it is too wide for one column."""
+    rows = [r.strip() for r in body.splitlines() if r.strip().startswith("|")]
+    cells = [[c.strip() for c in r.strip("|").split("|")] for r in rows]
+    cells = [c for c in cells if not all(set(x) <= set("-: ") for x in c)]
+    if not cells:
+        raise TexError("table card has no rows")
+    width = max(len(r) for r in cells)
+    head, *rest = cells
+    lines = [r"\begin{tabular}{" + "l" * width + "}", r"\toprule"]
+    lines.append(" & ".join(escape(c) for c in head) + r" \\")
+    lines.append(r"\midrule")
+    for row in rest:
+        row = row + [""] * (width - len(row))
+        lines.append(" & ".join(escape(c) for c in row) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    widest = max(sum(display_width(c) for c in row) + 3 * (width - 1) for row in cells)
+    return "\n".join(lines), widest > COLUMN_CHARS
+
+
+def render(nodes: list[dict[str, Any]]) -> str:
+    out: list[str] = []
+    paragraph: list[str] = []
+    pending_figure: tuple[str, bool] | None = None
+    prev: dict[str, Any] | None = None
+    in_abstract = False
+    seen_heading = False
+
+    def flush() -> None:
+        nonlocal paragraph
+        if paragraph:
+            out.append(" ".join(paragraph))
+            out.append("")
+            paragraph = []
+
+    for node in nodes:
+        if node.get("type") == "file":
+            flush()
+            # A figure keeps the Canvas card's aspect ratio, so the card itself
+            # says whether the image needs both columns.
+            aspect = node["width"] / max(node["height"], 1)
+            pending_figure = (Path(node.get("file", "")).name, aspect > WIDE_ASPECT)
+            prev = node
+            continue
+
+        text = strip_id(node.get("text", ""))
+        if not text:
+            continue
+
+        heading = HEADING.match(text.splitlines()[0]) if text.startswith("# ") else None
+        if heading:
+            flush()
+            number, title = heading.group(1), heading.group(2).strip()
+            if not seen_heading and number is None and title and "초록" not in title:
+                out.append(f"% title: {title}")  # belongs in the preamble's \title{}
+                out.append("")
+                seen_heading = True
+                prev = node
+                continue
+            seen_heading = True
+            if number is None:
+                if in_abstract:
+                    out.append(r"\end{abstract}")
+                out += [r"\begin{abstract}", ""]
+                in_abstract = True
+            else:
+                if in_abstract:
+                    out += [r"\end{abstract}", ""]
+                    in_abstract = False
+                depth = number.count(".")
+                cmd = "section" if depth == 0 else "subsection" if depth == 1 else "subsubsection"
+                out.append(f"\\{cmd}{{{escape(title)}}}\\label{{sec:{number}}}")
+                out.append("")
+            prev = node
+            continue
+
+        artifact = ARTIFACT.match(text)
+        if artifact:
+            flush()
+            kind, number, rest = artifact.group(1), artifact.group(2), artifact.group(3)
+            caption = escape(rest.split("\n")[0].strip())
+            if kind == "Table":
+                tabular, wide = markdown_table(rest)
+                env = "table*" if wide else "table"
+                out += [f"\\begin{{{env}}}[t]", r"\centering", tabular,
+                        f"\\caption{{{caption}}}", f"\\label{{tab:{number}}}",
+                        f"\\end{{{env}}}", ""]
+            else:
+                if pending_figure is None:
+                    raise TexError(f"Figure {number} caption has no image card above it")
+                env = "figure*" if pending_figure[1] else "figure"
+                out += [f"\\begin{{{env}}}[t]", r"\centering",
+                        f"\\includegraphics[width=\\linewidth]{{figs/{pending_figure[0]}}}",
+                        f"\\caption{{{caption}}}", f"\\label{{fig:{number}}}",
+                        f"\\end{{{env}}}", ""]
+                pending_figure = None
+            prev = node
+            continue
+
+        gap = node["y"] - (prev["y"] + prev["height"]) if prev and prev["x"] == node["x"] else None
+        if gap is None or gap >= PARAGRAPH_GAP:
+            flush()
+        paragraph.append(escape(" ".join(text.split())))
+        prev = node
+
+    flush()
+    if in_abstract:
+        out.append(r"\end{abstract}")
+    return "\n".join(out).rstrip() + "\n"
+
+
+def build(canvas: Path, label: str = "paper_v1") -> str:
+    return render(reading_order(load_group(canvas, label)))
+
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("canvas", type=Path)
+    parser.add_argument("--group", default="paper_v1")
+    parser.add_argument("--out", type=Path)
+    args = parser.parse_args()
+    try:
+        body = build(args.canvas, args.group)
+    except (TexError, OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"error: {exc}")
+    if args.out:
+        args.out.write_text(body, encoding="utf-8")
+        print(f"{args.out} ({len(body)} bytes)")
+    else:
+        print(body, end="")
+
+
+if __name__ == "__main__":
+    main()

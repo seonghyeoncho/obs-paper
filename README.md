@@ -80,6 +80,16 @@ The CLI compiles a human-readable JSON request into a SHA-bound Canvas patch, ap
 python plugins/paper-canvas-workflow/scripts/obs_paper.py nodes "/path/to/Project.canvas" rfparams00000001 rfanswer1rq10001
 ```
 
+## LaTeX
+
+`paper_tex.py` assembles a `paper_vN` group into a LaTeX body — abstract, sections from the numbers in their headings, paragraphs from the 20/40px gaps, Markdown tables as `booktabs` tabulars, and image cards as figures. An artifact too wide for one column becomes a starred float.
+
+```bash
+python plugins/paper-canvas-workflow/scripts/paper_tex.py "/path/to/Project.canvas" --group paper_v1 --out body.tex
+```
+
+It emits a body fragment, not a whole document: the template keeps the preamble, author block, and bibliography, and `\input{body}` pulls in the generated part. Generation is one way — nothing reads LaTeX back into the Canvas.
+
 ## Overleaf
 
 Overleaf publishes no project API, and its git and Zotero integrations are paid-only. `overleaf.py` therefore drives Overleaf as authenticated HTTP inside a signed-in [Aside](https://docs.aside.com) browser session, which needs the Aside CLI installed. A new project is a copy of your own LaTeX template rather than a blank project, so it arrives with its document class and bibliography file already in place.

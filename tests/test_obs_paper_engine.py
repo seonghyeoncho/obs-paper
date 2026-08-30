@@ -943,6 +943,60 @@ class ObsPaperEngineTest(unittest.TestCase):
             with self.assertRaises(PlanError):
                 compile_request(canvas, self.research_flow_request(nodes, []))
 
+    def paper_group(self, directory: Path, cards: list[dict]) -> Path:
+        nodes = [{"id": "g", "type": "group", "x": 0, "y": 0, "width": 9000, "height": 9000, "label": "paper_v1"}]
+        for i, c in enumerate(cards):
+            nodes.append({"id": f"n{i}", "type": c.get("type", "text"), "width": c.get("width", 812),
+                          "height": c.get("height", 70), "x": c["x"], "y": c["y"],
+                          **({"file": c["file"]} if "file" in c else {"text": c["text"]}),
+                          **({"color": c["color"]} if "color" in c else {})})
+        path = directory / "p.canvas"
+        path.write_text(json.dumps({"nodes": nodes, "edges": []}), encoding="utf-8")
+        return path
+
+    def test_paper_tex_heading_levels_paragraphs_and_symbols(self) -> None:
+        from paper_tex import build
+
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = self.paper_group(Path(directory), [
+                {"x": 100, "y": 0, "text": "# 1 서론", "color": "6"},
+                {"x": 100, "y": 90, "text": "첫 문장. `0123456789abcdef`"},
+                {"x": 100, "y": 180, "text": "같은 문단."},                    # 20px gap
+                {"x": 100, "y": 290, "text": "θ=0.80이고 100% 미만이다."},      # 40px gap
+                {"x": 1100, "y": 0, "text": "# 1.1 구조", "color": "6"},
+            ])
+            body = build(canvas, "paper_v1")
+
+        self.assertIn(r"\section{서론}\label{sec:1}", body)
+        self.assertIn(r"\subsection{구조}\label{sec:1.1}", body)
+        self.assertIn("첫 문장. 같은 문단.", body, "a 20px gap keeps one paragraph")
+        self.assertNotIn("같은 문단. θ", body, "a 40px gap starts a new paragraph")
+        self.assertIn(r"$\theta$=0.80", body, "bare Greek must move into maths mode")
+        self.assertIn(r"100\%", body, "percent must be escaped")
+        self.assertNotIn("0123456789abcdef", body, "the node id is metadata, not content")
+
+    def test_paper_tex_spans_both_columns_when_an_artifact_is_wide(self) -> None:
+        from paper_tex import build
+
+        wide = "**Table 1**: 넓은 표.\n\n| a | b | c | d |\n|---|---|---|---|\n| " + " | ".join(["x" * 20] * 4) + " |"
+        narrow = "**Table 2**: 좁은 표.\n\n| a | b |\n|---|---|\n| 1 | 2 |"
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = self.paper_group(Path(directory), [
+                {"x": 100, "y": 0, "text": wide},
+                {"x": 100, "y": 400, "text": narrow},
+                {"x": 1100, "y": 0, "type": "file", "file": "figs/a.png", "width": 780, "height": 200},
+                {"x": 1100, "y": 300, "text": "**Figure 1**: 넓은 그림."},
+                {"x": 2100, "y": 0, "type": "file", "file": "figs/b.png", "width": 400, "height": 400},
+                {"x": 2100, "y": 500, "text": "**Figure 2**: 좁은 그림."},
+            ])
+            body = build(canvas, "paper_v1")
+
+        self.assertIn(r"\begin{table*}", body, "a table too wide for one column must span both")
+        self.assertIn(r"\begin{table}", body, "a narrow table stays in its column")
+        self.assertIn(r"\begin{figure*}", body, "a wide image must span both columns")
+        self.assertIn(r"\includegraphics[width=\linewidth]{figs/a.png}", body)
+        self.assertIn(r"\toprule", body)
+
     def test_side_card_with_a_table_is_not_sized_as_a_heading(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             data = fixture_canvas()
