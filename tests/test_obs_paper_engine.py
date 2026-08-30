@@ -1080,6 +1080,39 @@ class ObsPaperEngineTest(unittest.TestCase):
         self.assertIn(r"\begin{tabular}", extras["tables/table1.tex"])
         self.assertIn(r"\label{tab:1}", extras["tables/table1.tex"], "the float goes with it, label and all")
 
+    def test_paper_tex_sends_appendix_material_to_its_own_file(self) -> None:
+        from paper_tex import build
+
+        nodes = [
+            {"id": "g", "type": "group", "x": 0, "y": 0, "width": 9000, "height": 9000, "label": "paper_v1"},
+            {"id": "ag", "type": "group", "x": 2000, "y": 0, "width": 900, "height": 900,
+             "label": "\uc2e4\ud5d8 \u00b7 Appendix A"},
+            {"id": "t", "type": "text", "x": 100, "y": 0, "width": 812, "height": 51,
+             "text": "# \uc81c\ubaa9", "color": "6"},
+            {"id": "s", "type": "text", "x": 100, "y": 90, "width": 812, "height": 51,
+             "text": "# \uc11c\ub860", "color": "6"},
+            {"id": "p", "type": "text", "x": 100, "y": 180, "width": 812, "height": 51,
+             "text": "\ubcf8\ubb38 \ubb38\uc7a5."},
+            {"id": "ah", "type": "text", "x": 2050, "y": 50, "width": 812, "height": 51,
+             "text": "# \ud504\ub86c\ud504\ud2b8", "color": "6"},
+            {"id": "ap", "type": "text", "x": 2050, "y": 140, "width": 812, "height": 51,
+             "text": "\ubd80\ub85d \ubb38\uc7a5."},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = Path(directory) / "c.canvas"
+            canvas.write_text(json.dumps({"nodes": nodes, "edges": []}), encoding="utf-8")
+            extras: dict[str, str] = {}
+            body = build(canvas, "paper_v1", None, extras)
+
+        self.assertIn("\ubcf8\ubb38 \ubb38\uc7a5.", body)
+        self.assertNotIn("\ubd80\ub85d \ubb38\uc7a5.", body, "appendix prose leaves the body")
+        self.assertIn("appendix.tex", extras)
+        appendix = extras["appendix.tex"]
+        self.assertIn("\ubd80\ub85d \ubb38\uc7a5.", appendix)
+        self.assertIn("\\section{프롬프트}\\label{app:1}", appendix,
+                      "appendix labels are prefixed so they cannot collide with body sections")
+        self.assertNotIn(r"\appendix", appendix, "the template declares \\appendix, not the generator")
+
     def test_paper_tex_rejects_a_heading_with_no_level_colour(self) -> None:
         from paper_tex import TexError, build
 

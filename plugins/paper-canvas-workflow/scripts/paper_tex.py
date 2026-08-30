@@ -55,6 +55,10 @@ CITATION = re.compile(r"~?\\cite[tp]?(?:\[[^\]]*\])?\{[^}]+\}")
 PLACEHOLDER = r"\{\}"
 SECTION_REF = re.compile(r"(\d+(?:\.\d+)*)절")
 TABLE_DIR = "tables"
+APPENDIX_FILE = "appendix.tex"
+# Appendix material lives in native sub-groups labelled `<Section> · Appendix <letters>`,
+# per the paper skill's section-paired layout. That label is what marks it.
+APPENDIX_LABEL = re.compile(r"appendix", re.I)
 
 
 class TexError(RuntimeError):
@@ -92,7 +96,21 @@ def load_group(canvas: Path, label: str) -> tuple[list[dict[str, Any]], list[dic
         e for e in data.get("edges", [])
         if e.get("fromNode") in inside and e.get("toNode") in inside
     ]
+    appendix_rects = [
+        node_box(n) for n in data["nodes"]
+        if n.get("type") == "group" and n["id"] != g["id"]
+        and APPENDIX_LABEL.search(n.get("label") or "")
+        and g["x"] <= n["x"] < g["x"] + g["width"]
+    ]
+    for n in nodes:
+        n["_appendix"] = any(
+            x <= n["x"] < x + w and y <= n["y"] < y + h for x, y, w, h in appendix_rects
+        )
     return nodes, edges
+
+
+def node_box(n: dict[str, Any]) -> tuple[int, int, int, int]:
+    return (n["x"], n["y"], n["width"], n["height"])
 
 
 def collect_citations(
@@ -158,7 +176,7 @@ def markdown_table(body: str) -> tuple[str, bool]:
     return "\n".join(lines), widest > COLUMN_CHARS
 
 
-def number_headings(nodes: list[dict[str, Any]]) -> dict[str, str]:
+def number_headings(nodes: list[dict[str, Any]], prefix: str = "sec") -> dict[str, str]:
     """Assign each heading the number LaTeX will print for it."""
     counter = {"section": 0, "subsection": 0, "paragraph": 0}
     numbers: dict[str, str] = {}
@@ -186,6 +204,7 @@ def number_headings(nodes: list[dict[str, Any]]) -> dict[str, str]:
             str(counter[k]) for k in ("section", "subsection", "paragraph")
             if counter[k] or k == "section"
         )
+    del prefix  # the prefix belongs to the label, not the number
     return numbers
 
 
@@ -235,13 +254,14 @@ def apply_citations(escaped: str, commands: list[str]) -> str:
 
 def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = None,
            consumed: set[str] | None = None, refs: dict[str, list[str]] | None = None,
-           drift: list[str] | None = None, extras: dict[str, str] | None = None) -> str:
+           drift: list[str] | None = None, extras: dict[str, str] | None = None,
+           label_prefix: str = "sec", has_title: bool = True) -> str:
     out: list[str] = []
     paragraph: list[str] = []
     pending_figure: tuple[str, bool] | None = None
     prev: dict[str, Any] | None = None
     in_abstract = False
-    seen_heading = False
+    seen_heading = not has_title  # an appendix file has no manuscript title
     counter = {"section": 0, "subsection": 0, "paragraph": 0}
 
     def flush() -> None:
@@ -305,7 +325,7 @@ def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = Non
                     str(counter[k]) for k in ("section", "subsection", "paragraph")
                     if counter[k] or k == "section"
                 )
-                out += [f"\\{level}{{{escape(title)}}}\\label{{sec:{tag}}}", ""]
+                out += [f"\\{level}{{{escape(title)}}}\\label{{{label_prefix}:{tag}}}", ""]
             prev = node
             continue
 
@@ -361,14 +381,24 @@ def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = Non
 def build(canvas: Path, label: str = "paper_v1", drift: list[str] | None = None,
           extras: dict[str, str] | None = None) -> str:
     nodes, edges = load_group(canvas, label)
-    ordered = reading_order(nodes)
     cited, consumed = collect_citations(nodes, edges)
-    numbers = number_headings(ordered)
+
+    main = reading_order([n for n in nodes if not n.get("_appendix")])
+    appendix = reading_order([n for n in nodes if n.get("_appendix")])
+
+    numbers = number_headings(main)
     refs: dict[str, list[str]] = {}
     for edge in edges:
         if edge["toNode"] in numbers and edge["fromNode"] not in numbers:
             refs.setdefault(edge["fromNode"], []).append(numbers[edge["toNode"]])
-    return render(ordered, cited, consumed, refs, drift, extras)
+
+    if appendix and extras is not None:
+        # The template declares \appendix; this file only carries what follows it.
+        extras[APPENDIX_FILE] = render(
+            appendix, cited, consumed, refs, drift, extras,
+            label_prefix="app", has_title=False,
+        )
+    return render(main, cited, consumed, refs, drift, extras)
 
 
 def main() -> None:
