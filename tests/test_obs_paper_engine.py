@@ -1113,6 +1113,58 @@ class ObsPaperEngineTest(unittest.TestCase):
                       "appendix labels are prefixed so they cannot collide with body sections")
         self.assertNotIn(r"\appendix", appendix, "the template declares \\appendix, not the generator")
 
+    def test_paper_pull_names_the_one_card_a_coauthor_changed(self) -> None:
+        from paper_pull import compare
+
+        nodes = [
+            {"id": "g", "type": "group", "x": 0, "y": 0, "width": 9000, "height": 9000, "label": "paper_v1"},
+            {"id": "t", "type": "text", "x": 100, "y": 0, "width": 812, "height": 51,
+             "text": "# 제목", "color": "6"},
+            {"id": "s", "type": "text", "x": 100, "y": 90, "width": 812, "height": 51,
+             "text": "# 초록", "color": "6"},
+            {"id": "a", "type": "text", "x": 100, "y": 180, "width": 812, "height": 51,
+             "text": "첫째 문장이다."},
+            {"id": "b", "type": "text", "x": 100, "y": 251, "width": 812, "height": 51,
+             "text": "둘째 문장이다."},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = Path(directory) / "c.canvas"
+            canvas.write_text(json.dumps({"nodes": nodes, "edges": []}), encoding="utf-8")
+            tex = Path(directory) / "m.tex"
+            tex.write_text(
+                "\\begin{abstract}\n\n첫째 문장이다. 둘째 문장을 공저자가 고쳤다.\n\n"
+                "\\end{abstract}\n\n\\bibliography{custom}\n",
+                encoding="utf-8",
+            )
+            result = compare(canvas, tex)
+
+        self.assertFalse(result["in_sync"])
+        self.assertEqual(len(result["changed"]), 1)
+        self.assertEqual(result["changed"][0]["cards"], ["b"],
+                         "only the card whose sentence no longer appears is named")
+
+    def test_paper_pull_reports_in_sync_when_nothing_changed(self) -> None:
+        from paper_pull import compare
+        from paper_tex import build
+
+        nodes = [
+            {"id": "g", "type": "group", "x": 0, "y": 0, "width": 9000, "height": 9000, "label": "paper_v1"},
+            {"id": "t", "type": "text", "x": 100, "y": 0, "width": 812, "height": 51,
+             "text": "# 제목", "color": "6"},
+            {"id": "s", "type": "text", "x": 100, "y": 90, "width": 812, "height": 51,
+             "text": "# 초록", "color": "6"},
+            {"id": "a", "type": "text", "x": 100, "y": 180, "width": 812, "height": 51,
+             "text": "그대로인 문장이다."},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = Path(directory) / "c.canvas"
+            canvas.write_text(json.dumps({"nodes": nodes, "edges": []}), encoding="utf-8")
+            tex = Path(directory) / "m.tex"
+            tex.write_text(build(canvas, "paper_v1") + "\n\\bibliography{custom}\n", encoding="utf-8")
+            result = compare(canvas, tex)
+
+        self.assertTrue(result["in_sync"], "a round trip with no edits reports nothing to do")
+
     def test_paper_tex_rejects_a_heading_with_no_level_colour(self) -> None:
         from paper_tex import TexError, build
 

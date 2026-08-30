@@ -45,7 +45,20 @@ What the generator reads from the layout: sections run left to right and each co
 
 Bare Greek and maths characters are moved into maths mode, since the Canvas renders `θ` directly and pdflatex will not. Node ids are stripped as the metadata they are.
 
-Generation is one way. Nothing reads LaTeX back into the Canvas, so an edit made in Overleaf is lost on the next rebuild unless it is brought back to the Canvas first.
+## Bringing Overleaf edits back
+
+Co-authors edit the manuscript in Overleaf, and those edits have to reach the Canvas or the next rebuild discards them.
+
+```bash
+python /path/to/plugin/scripts/overleaf.py download <project_id> --out paper.zip
+python /path/to/plugin/scripts/paper_pull.py <canvas> <the unzipped .tex>
+```
+
+`paper_pull.py` regenerates the body from the Canvas, aligns it paragraph by paragraph against the manuscript, and reports what differs. A changed paragraph names the card to edit: a paragraph is several cards joined, and every sentence still present word for word is untouched, so what is left is the one card that changed. A paragraph a co-author added names no card, because none produced it.
+
+It writes nothing. Turning a LaTeX edit back into Korean prose cards is a judgement — unescaping, citations folded back out, a sentence split across cards — and a wrong guess corrupts the manuscript quietly. Naming the cards is the part that can be done correctly; fetch them with the `node` skill and edit them yourself.
+
+Pull before regenerating, always. Rebuilding first overwrites the answer to what changed.
 
 ## Manuscript grammar
 

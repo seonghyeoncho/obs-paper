@@ -88,7 +88,7 @@ python plugins/paper-canvas-workflow/scripts/obs_paper.py nodes "/path/to/Projec
 python plugins/paper-canvas-workflow/scripts/paper_tex.py "/path/to/Project.canvas" --group paper_v1 --out main.tex
 ```
 
-Each table is written to `tables/tableN.tex` beside it and the body keeps a one-line `\input`, so a seventeen-row tabular does not bury the prose around it. Appendix material — anything in a Canvas sub-group labelled for an appendix — goes to `appendix.tex`. It emits a body fragment, not a whole document: the template keeps the preamble, author block, and bibliography. Generation is one way — nothing reads LaTeX back into the Canvas.
+Each table is written to `tables/tableN.tex` beside it and the body keeps a one-line `\input`, so a seventeen-row tabular does not bury the prose around it. Appendix material — anything in a Canvas sub-group labelled for an appendix — goes to `appendix.tex`. It emits a body fragment, not a whole document: the template keeps the preamble, author block, and bibliography. `paper_pull.py` runs the other way: it compares a manuscript pulled from Overleaf against the Canvas and names the card behind each changed paragraph. It reports only — turning a LaTeX edit back into prose cards is a judgement, so the cards are named and you edit them.
 
 ## Overleaf
 
