@@ -9,8 +9,8 @@
     {
       "name": "paper-canvas-workflow",
       "source": "./plugins/paper-canvas-workflow",
-      "description": "Manage unified-vault paper projects, Zotero-linked libraries, research flows, rebuttals, and camera-ready manuscripts in Obsidian Canvas.",
-      "version": "0.4.0"
+      "description": "Manage unified-vault paper projects, Zotero-linked libraries and PDF flows, research flows, rebuttals, and camera-ready manuscripts in Obsidian Canvas.",
+      "version": "0.5.0"
     }
   ]
 }

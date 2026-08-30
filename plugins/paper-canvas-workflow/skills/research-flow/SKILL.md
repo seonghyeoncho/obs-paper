@@ -10,7 +10,8 @@ Treat the user's research notes and existing Obsidian Canvas as paired research 
 ## Deterministic automation
 
 - Read `../../references/request-schema.md` before authoring a request.
-- Use `../../scripts/obs_paper.py` with workflow `research-flow` and action `add_research_flow` after inspecting the existing grammar.
+- Read `references/content-structure.md` before writing or revising node text: content reconstruction, node splitting, metadata separation, or Korean editing. Ordinary layout work does not need it.
+- Use `../../scripts/obs_paper.py` with workflow `research-flow` and actions `add_research_flow`, `link_literature`, or `remove_items` after inspecting the existing grammar.
 - Supply stable keyed nodes with exact geometry and explicit links. Use kinds `rq`, `experiment`, `answer`, `bridge`, `thought`, `source`, `table`, or `figure`.
 - Give an experiment ordered `sections` for its setup/results/control compound. The handler creates green H2 cards without internal arrows and routes outgoing flow from the final section.
 - Supply an actual `file` for a figure and the complete Markdown source for a table. The handler rejects figure placeholders.
@@ -29,6 +30,7 @@ Treat the user's research notes and existing Obsidian Canvas as paired research 
 - Keep untouched node IDs, positions, sizes, colors, edges, and file references unchanged.
 - Edit only cards required by the paper task. Add a card only when no existing card represents the idea.
 - Place additions beside the claim, evidence, review, or section they extend, following the surrounding layout and color convention.
+- Treat every RQ and bridge question as its own literature-search unit. Link each selected paper beside the narrowest question it answers; never pool project literature in a detached bottom cluster. Reuse one Zotero item, PDF, bibliography entry, and per-paper Canvas, but create a separate target-specific literature card when the same paper supports multiple questions.
 - Separate measured facts from interpretation when adding research content. Every numerical claim records its denominator, pooling unit, cohort/configuration, and primary source. Every interpretation remains traceable to the relevant evidence card.
 - Do not silently erase superseded reasoning. Keep a concise correction note and connect or position it with the corrected claim.
 - The repository-defined manuscript remains the publication source of truth unless the user explicitly designates the Canvas as the source. Canvas edits do not authorize unrelated manuscript rewrites, and manuscript edits do not authorize wholesale Canvas synchronization.
@@ -40,6 +42,7 @@ Treat the user's research notes and existing Obsidian Canvas as paired research 
 - Use one sentence per ordinary RQ, RQ-A, and bridge-question card. Render `RQ`, `RQ-E`, and `RQ-A` identifiers as H1 headings. Bridge-question cards contain only the question; their orange color carries the type instead of an explicit label.
 - Treat each RQ-E as a compound: an H1 title card followed by one card per H2 section such as setup, results, and sanity/control. Stack the section cards closely with no arrows between them. Normal flow enters the RQ-E title and leaves its final evidence section.
 - Put each primary source in a separate uncoloured/default-grey card outside the evidence stack, connected laterally to the setup card. Keep citations and provenance out of the setup prose when they can be separated cleanly.
+- A related-literature card contains the verified title, exact citation key, Zotero item link, one-sentence relevance, and a wikilink to `Paper/<full paper title>.canvas`. Point its edge to the exact RQ or bridge-question. The paper Canvas links back to the research Canvas so Obsidian backlinks preserve the literature genealogy.
 - Include the actual experiment method and results with denominators, pooling unit, controls, and configuration. Put every source Markdown table in its own card, preserving the complete table rather than reducing it to selected numbers or prose. Put every source figure in its own file/image card and display the artifact itself. If the canonical source lacks the raw table or figure, mark it unavailable in the grey source card; never reconstruct or invent it from a headline number.
 - When one RQ has multiple RQ-E cards, top-align them on the same y-coordinate. Keep their corresponding RQ-A cards in the same horizontal lanes. For a parallel split/merge, preserve enough vertical space for curved arrows; infer it from the user's nearest edited example. In the current Skill Following Canvas, RQ2 defines 200px before the E row, 40px inside each E→A lane, and 166px before the merged next node.
 - Use purple for RQ, green for RQ-E facts, yellow for RQ-A interpretations, and orange for bridge questions. Reserve red exclusively for the user's refutation or personal-thought cards; do not use red merely to mark an open RQ.

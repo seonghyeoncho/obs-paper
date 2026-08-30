@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import tempfile
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -155,19 +156,36 @@ def bounding_rect(nodes: list[dict[str, Any]], padding: int) -> Rect:
     return Rect(left, top, right - left, bottom - top)
 
 
+_TABLE_RULE = re.compile(r"^\|[\s:|-]+\|$")
+
+
+def display_width(text: str) -> int:
+    """Rendered width in half-widths; CJK glyphs occupy two."""
+    return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)
+
+
 def estimate_text_height(text: str, width: int, kind: str) -> int:
     """Estimate Obsidian card height; callers may provide an exact height."""
-    # ponytail: heuristic sizing; replace with renderer measurements if real cards clip.
+    # ponytail: calibrated against hand-corrected cards; remeasure if real cards clip.
     if kind == "heading":
         return 70
     if kind == "equation":
         return max(100, 40 + 30 * len(text.splitlines()))
-    chars_per_line = max(20, width // 8)
-    visual_lines = sum(
-        max(1, (len(line) + chars_per_line - 1) // chars_per_line)
-        for line in text.splitlines() or [""]
-    )
-    return max(70, ((40 + 20 * visual_lines + 9) // 10) * 10)
+    columns = max(12, (width - 40) * 2 // 21)
+    height = 60
+    for line in text.splitlines() or [""]:
+        stripped = line.strip()
+        if not stripped:
+            height += 12
+        elif _TABLE_RULE.match(stripped):
+            continue  # the |---| rule renders as a border, not a row
+        elif stripped.startswith("|"):
+            height += 35
+        elif stripped.startswith("#"):
+            height += 34
+        else:
+            height += 24 * max(1, -(-display_width(stripped) // columns))
+    return max(70, ((height + 9) // 10) * 10)
 
 
 def estimate_mapping_height(text: str, width: int, *, title: bool = False) -> int:
@@ -816,6 +834,68 @@ def _compile_connect_reference(
     return operations
 
 
+def _compile_link_literature(
+    document: CanvasDocument,
+    action: dict[str, Any],
+    target_group: dict[str, Any],
+) -> list[dict[str, Any]]:
+    key, target_id = action.get("key"), action.get("target_id")
+    title, citekey = action.get("title"), action.get("citekey")
+    item_key, paper_flow = action.get("item_key"), action.get("paper_flow")
+    if any(not isinstance(value, str) or not value.strip() for value in (key, target_id, title, citekey, item_key)):
+        raise PlanError("link_literature needs key, target_id, title, citekey, and item_key")
+    if paper_flow is not None and (not isinstance(paper_flow, str) or not paper_flow.strip()):
+        raise PlanError("link_literature paper_flow must be a non-empty string when provided")
+    target = document.node(target_id)
+    target_rect = node_rect(target_group)
+    if target.get("type") != "text" or not target_rect.contains(target):
+        raise PlanError("literature target must be a text node inside the research-flow group")
+    lane = action.get("lane", "left")
+    if lane not in {"left", "right"}:
+        raise PlanError("literature lane must be left or right")
+    width, gap = action.get("width", 560), action.get("gap", 20)
+    relevance = action.get("relevance", "")
+    if not isinstance(width, int) or width <= 0 or not isinstance(gap, int) or gap < 0 or not isinstance(relevance, str):
+        raise PlanError("invalid literature card geometry or relevance")
+    text = (
+        f"{title}\n"
+        f"\\cite{{{citekey}}}\n"
+    )
+    if paper_flow:
+        text += f"[[{paper_flow}|Paper flow]]\n"
+    text += f"[Open in Zotero](zotero://select/library/items/{item_key})"
+    if relevance.strip():
+        text += f"\n{relevance.strip()}"
+    height = action.get("height", estimate_text_height(text, width, "paragraph"))
+    if not isinstance(height, int) or height <= 0:
+        raise PlanError("invalid literature card height")
+    x = action.get("x", target["x"] - gap - width if lane == "left" else target["x"] + target["width"] + gap)
+    y = action.get("y", target["y"] + (target["height"] - height) // 2)
+    if not isinstance(x, int) or not isinstance(y, int):
+        raise PlanError("literature card coordinates must be integers")
+    node_id = action.get("node_id") or deterministic_id(target_group["id"], "literature", key)
+    card = {"id": node_id, "type": "text", "x": x, "y": y, "width": width, "height": height, "text": text}
+    if not target_rect.contains(card):
+        raise PlanError("literature card does not fit inside the research-flow group")
+    scratch = CanvasDocument(copy.deepcopy(document.data))
+    operations: list[dict[str, Any]] = []
+    _append_operation(scratch, operations, _node_operation(scratch, card, target_group_id=target_group["id"]))
+    from_side, to_side = dominant_reference_sides(card, target)
+    _append_operation(
+        scratch,
+        operations,
+        _edge_operation(
+            scratch,
+            key_parts=[target_group["id"], "literature_edge", key, target_id],
+            from_node=node_id,
+            to_node=target_id,
+            from_side=from_side,
+            to_side=to_side,
+        ),
+    )
+    return operations
+
+
 def _compile_fit_section_title(
     document: CanvasDocument,
     action: dict[str, Any],
@@ -1310,8 +1390,12 @@ def _compile_add_research_flow(
     for link in links:
         if not isinstance(link, list) or len(link) != 2 or link[0] not in exit_ids or link[1] not in entry_ids:
             raise PlanError("research-flow links must contain two known keys")
-        side = "right" if kinds[link[0]] == "thought" else "bottom"
-        target_side = "left" if side == "right" else "top"
+        if kinds[link[0]] == "thought":
+            side, target_side = "right", "left"
+        elif kinds[link[0]] == "source":
+            side, target_side = dominant_reference_sides(scratch.node(exit_ids[link[0]]), scratch.node(entry_ids[link[1]]))
+        else:
+            side, target_side = "bottom", "top"
         _append_operation(
             scratch,
             operations,
@@ -1553,6 +1637,7 @@ REQUEST_COMPILERS: dict[
     "pair_appendix_columns": _compile_pair_appendix_columns,
     "split_citation": _compile_split_citation,
     "connect_reference": _compile_connect_reference,
+    "link_literature": _compile_link_literature,
     "fit_section_title": _compile_fit_section_title,
     "move_nodes": _compile_move_nodes,
     "shift_sibling_group": _compile_shift_sibling_group,
@@ -1585,7 +1670,7 @@ WORKFLOW_ACTIONS = {
     "camera-ready-mapping": {"map_issue", "mapping_master", "remove_items"},
     "camera-ready": {"build_camera_ready"},
     "rebuttal": {"layout_rebuttal"},
-    "research-flow": {"add_research_flow"},
+    "research-flow": {"add_research_flow", "link_literature", "remove_items"},
 }
 
 
@@ -1817,6 +1902,47 @@ def apply_patch(canvas: Path, patch: dict[str, Any], log: Path | None = None) ->
             result=f"Applied {len(operations)} operation(s); backup={backup.name}",
         )
     return result
+
+
+def read_nodes(canvas: Path, node_ids: list[str]) -> dict[str, Any]:
+    """Fetch nodes by exact id, with their edges. Direct lookup, never a search."""
+    document = CanvasDocument.load(canvas)
+    node_map = document.node_map()
+    groups = [node for node in document.nodes if node["type"] == "group"]
+    found: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for node_id in node_ids:
+        node = node_map.get(node_id)
+        if node is None:
+            missing.append(node_id)
+            continue
+        rect = node_rect(node)
+        entry = {
+            "id": node_id,
+            "type": node["type"],
+            "group": next(
+                (group.get("label") for group in groups if group["id"] != node_id and node_rect(group).contains(node)),
+                None,
+            ),
+            "color": node.get("color"),
+            "geometry": {"x": rect.x, "y": rect.y, "width": rect.width, "height": rect.height},
+            "incoming": [
+                {"from": edge["fromNode"], "label": edge.get("label")}
+                for edge in document.edges
+                if edge["toNode"] == node_id
+            ],
+            "outgoing": [
+                {"to": edge["toNode"], "label": edge.get("label")}
+                for edge in document.edges
+                if edge["fromNode"] == node_id
+            ],
+        }
+        if node["type"] == "file":
+            entry["file"] = node.get("file")
+        else:
+            entry["text"] = node.get("text", "")
+        found.append(entry)
+    return {"canvas": str(canvas), "nodes": found, "missing": missing}
 
 
 def inspect_canvas(canvas: Path, target: dict[str, Any] | None = None) -> dict[str, Any]:

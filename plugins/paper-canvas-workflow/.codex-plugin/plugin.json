@@ -1,7 +1,7 @@
 {
   "name": "paper-canvas-workflow",
-  "version": "0.4.0+codex.20260830093014",
-  "description": "Manage academic projects, Zotero-linked paper libraries, research flows, rebuttals, and camera-ready manuscripts in Obsidian Canvas.",
+  "version": "0.5.0",
+  "description": "Manage academic projects, Zotero-linked paper libraries and PDF flows, research flows, rebuttals, and camera-ready manuscripts in Obsidian Canvas.",
   "author": {
     "name": "seonghyeoncho",
     "url": "https://github.com/seonghyeoncho"
@@ -29,6 +29,7 @@
     "websiteURL": "https://github.com/seonghyeoncho/obs-paper",
     "defaultPrompt": [
       "Create this paper project in my unified Obsidian vault and connect its Zotero library.",
+      "Find literature for each research question and build a PDF-grounded paper flow.",
       "Map this paper into a sentence-level Obsidian Canvas.",
       "Organize these reviewer comments into a rebuttal workflow.",
       "Map camera-ready changes onto paper_v2 without rewriting it.",

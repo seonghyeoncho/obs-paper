@@ -55,6 +55,34 @@ Allowed mapping statuses are `wording`, `ready`, `pending`, `author input`, and 
 - Ordinary node: `key`, `kind`, `text`, `x`, `y`; optional geometry.
 - Figure: also supply `file`, `width`, and `height`.
 - Experiment: optionally supply ordered `sections`, each with `key`, `heading`, `text`, and optional `height`.
+- `link_literature`: `key`, exact research `target_id`, verified `title`, `citekey`, and Zotero `item_key`; optional existing vault-relative `paper_flow`, `relevance`, `lane`, and explicit geometry. It creates one uncoloured source card and a source-to-question edge. Create separate target-specific cards when one paper supports multiple questions.
+- `remove_items`: explicit `node_ids` and `edge_ids`. Include every edge incident to a removed node.
+
+## Paper-flow build spec
+
+After verifying the Zotero stored PDF, create one sentence-level Canvas in the vault-wide `Paper/` folder with:
+
+```json
+{
+  "title": "Verified paper title",
+  "citekey": "stableKey",
+  "item_key": "ZOTERO1",
+  "sections": [
+    {
+      "key": "intro",
+      "title": "Introduction",
+      "blocks": [
+        {"key": "s1", "kind": "sentence", "paragraph": "p1", "text": "First original sentence."},
+        {"key": "s2", "kind": "sentence", "paragraph": "p1", "text": "Second original sentence."},
+        {"key": "sub", "kind": "heading", "level": 1, "text": "Background"},
+        {"key": "eq", "kind": "equation", "text": "$$x=1$$"}
+      ]
+    }
+  ]
+}
+```
+
+Blocks use `heading`, `sentence`, or `equation`; sentences require a stable paragraph key, headings may use indentation `level`, and equations require `$$` delimiters. `paper-flow-build` accepts only a reviewed JSON spec, creates `<Vault>/Paper/<sanitized full title>.canvas`, refuses a conflicting overwrite, and links its source card to Zotero. `--replace` intentionally rebuilds after copying the old Canvas to `Paper/.canvas-history/`. Automated PDF parsing is suspended and must not be invoked. A future PDF-flow workflow must use semantic prose blocks and inherit only the `paper` color grammar rather than the manuscript's sentence-splitting rule.
 
 ## Safe execution
 

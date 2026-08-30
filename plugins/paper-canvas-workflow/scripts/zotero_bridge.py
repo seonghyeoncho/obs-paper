@@ -8,13 +8,12 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode, urlparse, unquote
+from urllib.parse import quote, urlencode, urljoin, urlparse, unquote
 from urllib.request import Request, urlopen
 
 from obs_paper_engine import apply_patch, compile_request
@@ -27,7 +26,7 @@ class ZoteroError(RuntimeError):
 
 
 class ZoteroClient:
-    def __init__(self, base_url: str = "http://localhost:23119/api") -> None:
+    def __init__(self, base_url: str = "http://127.0.0.1:23119/api") -> None:
         self.base_url = base_url.rstrip("/")
 
     def _request(
@@ -38,16 +37,18 @@ class ZoteroClient:
         body: Any | None = None,
         headers: dict[str, str] | None = None,
         text: bool = False,
+        timeout: int = 15,
     ) -> tuple[Any, dict[str, str]]:
-        data = None if body is None else json.dumps(body).encode("utf-8")
+        data = body if isinstance(body, bytes) else (None if body is None else json.dumps(body).encode("utf-8"))
+        default_content_type = "application/octet-stream" if isinstance(body, bytes) else "application/json"
         request = Request(
             f"{self.base_url}/{path.lstrip('/')}",
             data=data,
             method=method,
-            headers={"Accept": "application/json", "Content-Type": "application/json", **(headers or {})},
+            headers={"Accept": "application/json", "Content-Type": default_content_type, **(headers or {})},
         )
         try:
-            with urlopen(request, timeout=15) as response:
+            with urlopen(request, timeout=timeout) as response:
                 raw = response.read().decode("utf-8")
                 payload = raw if text else (json.loads(raw) if raw else {})
                 return payload, dict(response.headers.items())
@@ -134,6 +135,7 @@ class ZoteroClient:
             method="POST",
             body={"appName": app_name},
             headers={"Zotero-Server-ID": server_id},
+            timeout=120,
         )
         key = payload.get("key") if isinstance(payload, dict) else None
         if not key:
@@ -246,6 +248,92 @@ class ZoteroClient:
                 return path
         raise ZoteroError(f"Zotero item {item_key} has no readable PDF attachment")
 
+    def import_pdf(self, item_key: str, source: Path, api_key: str | None = None) -> Path:
+        if not source.is_file() or source.suffix.lower() != ".pdf":
+            raise ZoteroError(f"PDF does not exist: {source}")
+        try:
+            existing = self.attachment_path(item_key)
+        except ZoteroError:
+            existing = None
+        if existing:
+            if _file_hash(existing) != _file_hash(source):
+                raise ZoteroError(f"Zotero item {item_key} already has a different PDF attachment")
+            return existing
+
+        key = api_key or os.environ.get("ZOTERO_LOCAL_API_KEY") or self.authorize()
+        status = self.status()
+        write_headers = {"Zotero-API-Key": key, "Zotero-Server-ID": status["server_id"]}
+        payload, _ = self._request(
+            "users/0/items",
+            method="POST",
+            body=[{
+                "itemType": "attachment",
+                "parentItem": item_key,
+                "linkMode": "imported_file",
+                "title": source.stem,
+                "contentType": "application/pdf",
+                "charset": "",
+                "filename": _safe_pdf_name(source),
+                "note": "",
+                "tags": [],
+                "relations": {},
+            }],
+            headers=write_headers,
+        )
+        created = payload.get("successful", {}).get("0", {}) if isinstance(payload, dict) else {}
+        attachment_key = created.get("key")
+        if not attachment_key:
+            raise ZoteroError(f"Zotero did not create the PDF attachment item: {payload}")
+
+        endpoint = f"users/0/items/{quote(attachment_key)}/file"
+        condition = {"If-None-Match": "*"}
+        upload_request = urlencode({
+            "md5": _file_md5(source),
+            "filename": _safe_pdf_name(source),
+            "filesize": source.stat().st_size,
+            "mtime": source.stat().st_mtime_ns // 1_000_000,
+        }).encode("utf-8")
+        authorization, _ = self._request(
+            endpoint,
+            method="POST",
+            body=upload_request,
+            headers={**write_headers, **condition, "Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if not authorization.get("exists"):
+            upload_key = authorization.get("uploadKey")
+            upload_url = authorization.get("url")
+            if not isinstance(upload_key, str) or not isinstance(upload_url, str):
+                raise ZoteroError(f"Zotero did not authorize the PDF upload: {authorization}")
+            # ponytail: local PDF uploads are buffered in memory; stream only if very large PDFs become common.
+            body = (
+                str(authorization.get("prefix", "")).encode("utf-8")
+                + source.read_bytes()
+                + str(authorization.get("suffix", "")).encode("utf-8")
+            )
+            request = Request(
+                urljoin(self.base_url + "/", upload_url),
+                data=body,
+                method="POST",
+                headers={"Content-Type": authorization.get("contentType", "application/octet-stream")},
+            )
+            try:
+                with urlopen(request, timeout=60) as response:
+                    if response.status != 201:
+                        raise ZoteroError(f"Zotero PDF upload returned HTTP {response.status}")
+            except (HTTPError, URLError) as exc:
+                raise ZoteroError(f"Zotero PDF upload failed: {exc}") from exc
+            self._request(
+                endpoint,
+                method="POST",
+                body=urlencode({"upload": upload_key}).encode("utf-8"),
+                headers={**write_headers, **condition, "Content-Type": "application/x-www-form-urlencoded"},
+                text=True,
+            )
+        stored = self.attachment_path(item_key)
+        if _file_hash(stored) != _file_hash(source):
+            raise ZoteroError(f"stored Zotero PDF failed hash verification for {item_key}")
+        return stored
+
 
 def _safe_pdf_name(path: Path) -> str:
     name = re.sub(r"[^\w.() -]+", "_", path.name, flags=re.UNICODE).strip(" .")
@@ -260,18 +348,12 @@ def _file_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
-def save_pdf(project: Path, source: Path) -> Path:
-    papers = project / "papers"
-    if not (project / "project.md").is_file() or not papers.is_dir():
-        raise ZoteroError(f"not an Obs Paper project: {project}")
-    if not source.is_file() or source.suffix.lower() != ".pdf":
-        raise ZoteroError(f"PDF does not exist: {source}")
-    destination = papers / _safe_pdf_name(source)
-    if destination.exists() and _file_hash(destination) != _file_hash(source):
-        raise ZoteroError(f"different PDF already exists: {destination}")
-    if not destination.exists():
-        shutil.copy2(source, destination)
-    return destination
+def _file_md5(path: Path) -> str:
+    digest = hashlib.md5(usedforsecurity=False)
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _project_collection(project: Path, client: ZoteroClient) -> str:
@@ -391,24 +473,19 @@ def add_paper(
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     if not isinstance(metadata, dict):
         raise ZoteroError("metadata JSON root must be an object")
-    destination = save_pdf(project, pdf)
     collection_key = _project_collection(project, client)
     metadata["collections"] = sorted(set(metadata.get("collections", [])) | {collection_key})
     item_key = client.create_item(metadata)
+    stored = client.import_pdf(item_key, pdf)
     citation = client.citation(item_key)
-    record = {**citation, "pdf": destination.relative_to(project).as_posix()}
-    index_path = project / "papers" / "index.json"
-    records = json.loads(index_path.read_text(encoding="utf-8")) if index_path.exists() else []
-    records = [entry for entry in records if entry.get("item_key") != item_key]
-    records.append(record)
-    index_path.write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    record = {**citation, "zotero_pdf": str(stored)}
     append_action(
         project / "CANVAS_ACTION_LOG.md",
         status="done",
         action="add-zotero-paper",
         target=item_key,
         reason=str(metadata_path),
-        result=f"Saved {record['pdf']} with citation {record['command']}",
+        result=f"Stored PDF in Zotero with citation {record['command']}",
     )
     if export:
         export_bibliography(project, client)
@@ -454,7 +531,7 @@ def _emit(value: Any) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-url", default="http://localhost:23119/api")
+    parser.add_argument("--base-url", default="http://127.0.0.1:23119/api")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status")
     search = commands.add_parser("search")
@@ -466,6 +543,9 @@ def main() -> None:
     save.add_argument("project", type=Path)
     save.add_argument("item_key")
     save.add_argument("--defer-export", action="store_true")
+    attach = commands.add_parser("attach")
+    attach.add_argument("item_key")
+    attach.add_argument("pdf", type=Path)
     setup = commands.add_parser("project-setup")
     setup.add_argument("project", type=Path)
     setup.add_argument("--defer-export", action="store_true")
@@ -514,18 +594,19 @@ def main() -> None:
         elif args.command == "save":
             collection_key = _project_collection(args.project, client)
             client.add_item_to_collection(args.item_key, collection_key)
-            source = client.attachment_path(args.item_key)
-            destination = save_pdf(args.project, source)
+            stored = client.attachment_path(args.item_key)
             bibliography = None if args.defer_export else export_bibliography(args.project, client)
             append_action(
                 args.project / "CANVAS_ACTION_LOG.md",
                 status="done",
                 action="save-zotero-pdf",
                 target=args.item_key,
-                reason=str(source),
-                result=f"Saved {destination}" + (f" and refreshed {bibliography['bibliography']}" if bibliography else "; export deferred"),
+                reason=str(stored),
+                result="Verified Zotero-stored PDF" + (f" and refreshed {bibliography['bibliography']}" if bibliography else "; export deferred"),
             )
-            _emit({"item_key": args.item_key, "pdf": str(destination), "bibliography": bibliography["bibliography"] if bibliography else None})
+            _emit({"item_key": args.item_key, "zotero_pdf": str(stored), "bibliography": bibliography["bibliography"] if bibliography else None})
+        elif args.command == "attach":
+            _emit({"item_key": args.item_key, "zotero_pdf": str(client.import_pdf(args.item_key, args.pdf))})
         elif args.command == "add":
             _emit(add_paper(args.project, args.metadata, args.pdf, client, export=not args.defer_export))
         else:
