@@ -85,10 +85,10 @@ python plugins/paper-canvas-workflow/scripts/obs_paper.py nodes "/path/to/Projec
 `paper_tex.py` assembles a `paper_vN` group into a LaTeX body — abstract, sections from the numbers in their headings, paragraphs from the 20/40px gaps, Markdown tables as `booktabs` tabulars, and image cards as figures. An artifact too wide for one column becomes a starred float.
 
 ```bash
-python plugins/paper-canvas-workflow/scripts/paper_tex.py "/path/to/Project.canvas" --group paper_v1 --out body.tex
+python plugins/paper-canvas-workflow/scripts/paper_tex.py "/path/to/Project.canvas" --group paper_v1 --out main.tex
 ```
 
-It emits a body fragment, not a whole document: the template keeps the preamble, author block, and bibliography, and `\input{body}` pulls in the generated part. Generation is one way — nothing reads LaTeX back into the Canvas.
+Each table is written to `tables/tableN.tex` beside it and the body keeps a one-line `\input`, so a seventeen-row tabular does not bury the prose around it. It emits a body fragment, not a whole document: the template keeps the preamble, author block, and bibliography. Generation is one way — nothing reads LaTeX back into the Canvas.
 
 ## Overleaf
 

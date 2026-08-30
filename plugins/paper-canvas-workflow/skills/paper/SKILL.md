@@ -21,7 +21,9 @@ Treat each native `paper_vN` group as one manuscript-version workspace. The vers
 
 ## Assembling the LaTeX
 
-`../../scripts/paper_tex.py <canvas> --group paper_vN --out body.tex` reads a manuscript group and emits a LaTeX body.
+`../../scripts/paper_tex.py <canvas> --group paper_vN --out main.tex` reads a manuscript group and emits a LaTeX body.
+
+Each table is written to `tables/tableN.tex` beside it and the body keeps a one-line `\input`. A tabular runs to dozens of lines — one of POLAR's is seventeen rows — and buries the prose it sits among, so the body stays readable and a table can be reworked without touching it. Figures stay inline, being five lines each. `--inline-tables` keeps everything in one file. Appendix material will split the same way once a manuscript has any.
 
 It emits a fragment, never a whole document. The template owns the preamble, author block, and bibliography; the Canvas owns the abstract, headings, prose, tables, and figures. They stay in separate files so that a rebuild replaces only generated content and leaves what co-authors edit alone. Ask what the generated file should be called and record it in `project.md`; the author adds a matching `\input` to the template once, in place of its abstract and placeholder section. Putting the file into Overleaf is the author's job — see the `overleaf` skill for why that is deliberate.
 
