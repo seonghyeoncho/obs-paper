@@ -959,21 +959,61 @@ class ObsPaperEngineTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             canvas = self.paper_group(Path(directory), [
-                {"x": 100, "y": 0, "text": "# 1 서론", "color": "6"},
-                {"x": 100, "y": 90, "text": "첫 문장. `0123456789abcdef`"},
-                {"x": 100, "y": 180, "text": "같은 문단."},                    # 20px gap
-                {"x": 100, "y": 290, "text": "θ=0.80이고 100% 미만이다."},      # 40px gap
-                {"x": 1100, "y": 0, "text": "# 1.1 구조", "color": "6"},
+                {"x": 100, "y": 0, "text": "# 논문 제목", "color": "6"},
+                {"x": 100, "y": 90, "text": "# 서론", "color": "6"},
+                {"x": 100, "y": 180, "text": "첫 문장. `0123456789abcdef`"},
+                {"x": 100, "y": 270, "text": "같은 문단."},                    # 20px gap
+                {"x": 100, "y": 380, "text": "θ=0.80이고 100% 미만이다."},      # 40px gap
+                {"x": 1100, "y": 0, "text": "# 구조", "color": "5"},
+                {"x": 1100, "y": 90, "text": "# 예시", "color": "4"},
             ])
             body = build(canvas, "paper_v1")
 
+        self.assertIn("% title: 논문 제목", body, "the first heading is the title, not a section")
         self.assertIn(r"\section{서론}\label{sec:1}", body)
         self.assertIn(r"\subsection{구조}\label{sec:1.1}", body)
+        self.assertIn(r"\paragraph{예시}\label{sec:1.1.1}", body)
+        self.assertNotIn("subsubsection", body, "the outline never goes below paragraph")
         self.assertIn("첫 문장. 같은 문단.", body, "a 20px gap keeps one paragraph")
         self.assertNotIn("같은 문단. θ", body, "a 40px gap starts a new paragraph")
         self.assertIn(r"$\theta$=0.80", body, "bare Greek must move into maths mode")
         self.assertIn(r"100\%", body, "percent must be escaped")
         self.assertNotIn("0123456789abcdef", body, "the node id is metadata, not content")
+
+    def test_normalize_paper_colors_keeps_outline_depth(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = fixture_canvas()
+            data["nodes"] += [
+                {"id": "sub", "type": "text", "x": 1000, "y": 400, "width": 800, "height": 70,
+                 "text": "# 구조", "color": "5"},
+                {"id": "para", "type": "text", "x": 1000, "y": 500, "width": 800, "height": 70,
+                 "text": "# 예시", "color": "4"},
+                {"id": "stray", "type": "text", "x": 1000, "y": 600, "width": 800, "height": 70,
+                 "text": "# 색 없음"},
+            ]
+            canvas = self.write_canvas(Path(directory), data)
+            request = {
+                "schema_version": 1, "workflow": "paper", "target": {"group_label": "paper_v1"},
+                "actions": [{"op": "normalize_paper_colors",
+                             "node_ids": ["sub", "para", "stray"], "contribution_ids": []}],
+            }
+            apply_patch(canvas, compile_request(canvas, request))
+            document = CanvasDocument.load(canvas)
+
+        self.assertEqual(document.node("sub")["color"], "5", "a subsection must not flatten to section")
+        self.assertEqual(document.node("para")["color"], "4", "a paragraph heading must keep its depth")
+        self.assertEqual(document.node("stray")["color"], "6", "a heading with no depth becomes a section")
+
+    def test_paper_tex_rejects_a_heading_with_no_level_colour(self) -> None:
+        from paper_tex import TexError, build
+
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = self.paper_group(Path(directory), [
+                {"x": 100, "y": 0, "text": "# 제목", "color": "6"},
+                {"x": 100, "y": 90, "text": "# 색 없는 제목"},
+            ])
+            with self.assertRaises(TexError):
+                build(canvas, "paper_v1")
 
     def test_paper_tex_spans_both_columns_when_an_artifact_is_wide(self) -> None:
         from paper_tex import build
