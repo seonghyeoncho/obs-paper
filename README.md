@@ -82,13 +82,13 @@ python plugins/paper-canvas-workflow/scripts/obs_paper.py nodes "/path/to/Projec
 
 ## LaTeX
 
-`paper_tex.py` assembles a `paper_vN` group into a LaTeX body — abstract, sections from the numbers in their headings, paragraphs from the 20/40px gaps, Markdown tables as `booktabs` tabulars, and image cards as figures. An artifact too wide for one column becomes a starred float.
+`paper_tex.py` assembles a `paper_vN` group into a LaTeX body — abstract, headings whose depth comes from the card's colour, paragraphs from the 20/40px gaps, Markdown tables as `booktabs` tabulars, and image cards as figures. Section numbers and cross-references are generated, so the Canvas never states a number that could go stale. An artifact too wide for one column becomes a starred float.
 
 ```bash
 python plugins/paper-canvas-workflow/scripts/paper_tex.py "/path/to/Project.canvas" --group paper_v1 --out main.tex
 ```
 
-Each table is written to `tables/tableN.tex` beside it and the body keeps a one-line `\input`, so a seventeen-row tabular does not bury the prose around it. It emits a body fragment, not a whole document: the template keeps the preamble, author block, and bibliography. Generation is one way — nothing reads LaTeX back into the Canvas.
+Each table is written to `tables/tableN.tex` beside it and the body keeps a one-line `\input`, so a seventeen-row tabular does not bury the prose around it. Appendix material — anything in a Canvas sub-group labelled for an appendix — goes to `appendix.tex`. It emits a body fragment, not a whole document: the template keeps the preamble, author block, and bibliography. Generation is one way — nothing reads LaTeX back into the Canvas.
 
 ## Overleaf
 
@@ -100,7 +100,7 @@ python plugins/paper-canvas-workflow/scripts/overleaf.py clone <template_id> --n
 python plugins/paper-canvas-workflow/scripts/overleaf.py download <project_id> --out paper.zip
 ```
 
-Record the resulting project id as `overleaf_project` in the project's `project.md`. Writing files back into Overleaf is not supported yet.
+Record the resulting project id as `overleaf_project` in the project's `project.md`. Putting the generated file into Overleaf is left to the author on purpose: the upload endpoint needs a folder id only Overleaf's websocket exposes, so automating it would mean driving the browser — the one non-deterministic step in an otherwise verifiable pipeline — and Overleaf drops comments and track changes on external writes.
 
 | Workflow | Actions |
 |---|---|

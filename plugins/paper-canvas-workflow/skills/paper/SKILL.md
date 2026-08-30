@@ -23,7 +23,17 @@ Treat each native `paper_vN` group as one manuscript-version workspace. The vers
 
 `../../scripts/paper_tex.py <canvas> --group paper_vN --out main.tex` reads a manuscript group and emits a LaTeX body.
 
-Each table is written to `tables/tableN.tex` beside it and the body keeps a one-line `\input`. A tabular runs to dozens of lines — one of POLAR's is seventeen rows — and buries the prose it sits among, so the body stays readable and a table can be reworked without touching it. Figures stay inline, being five lines each. `--inline-tables` keeps everything in one file. Appendix material will split the same way once a manuscript has any.
+The output is three kinds of file beside each other:
+
+```
+main.tex        body prose, headings, figures
+tables/          one file per table
+appendix.tex     appendix material, when there is any
+```
+
+A tabular runs to dozens of lines — one of POLAR's is seventeen rows — and buries the prose it sits among, so each table goes to `tables/tableN.tex` and the body keeps a one-line `\input`. The float travels whole, so a table can be reworked without touching the prose around it. Figures stay inline at five lines each. `--inline-tables` keeps everything in one file.
+
+Appendix material is whatever sits in a sub-group whose label names an appendix, per the section-paired layout below. It goes to `appendix.tex` with its headings labelled `app:` rather than `sec:`, so an appendix section cannot collide with a body section of the same number. The file holds only what follows `\appendix`; the template declares that. A manuscript with no appendix group produces no such file.
 
 It emits a fragment, never a whole document. `acl_latex.tex` stays the compile target and pulls the body in with `\input{main}`; the generated file only ever holds body content.
 
