@@ -172,6 +172,18 @@ RESEARCH_FLOW_SIDE_KINDS = frozenset({"source", "table", "figure", "implementati
 RESEARCH_FLOW_SECTION_HEADINGS = frozenset({"Setup", "Results"})
 
 
+def stamp_node_id(text: str, node_id: str) -> str:
+    """End a managed card with its own node id so it can be addressed directly.
+
+    Idempotent: re-stamping a card that already carries its id leaves it alone.
+    """
+    tag = f"`{node_id}`"
+    body = text.rstrip()
+    if body.endswith(tag):
+        return body
+    return f"{body}\n\n{tag}"
+
+
 def display_width(text: str) -> int:
     """Rendered width in half-widths; CJK glyphs occupy two."""
     return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)
@@ -1335,6 +1347,8 @@ def _compile_add_research_flow(
         rendered_text = (
             text if kind in {"bridge", "thought", *RESEARCH_FLOW_SIDE_KINDS} or text.startswith("#") else f"# {text}"
         )
+        if kind != "figure":
+            rendered_text = stamp_node_id(rendered_text, node_id)
         if kind == "figure":
             if not isinstance(spec.get("file"), str) or not spec["file"]:
                 raise PlanError("research-flow figures need a file")
@@ -1354,7 +1368,10 @@ def _compile_add_research_flow(
                 "x": x,
                 "y": y,
                 "width": width,
-                "height": spec.get("height", estimate_text_height(rendered_text, width, "heading" if rendered_text.startswith("#") else "paragraph")),
+                # Every research-flow card is measured as prose. The fixed heading
+                # height is for single-line titles, and no card is single-line once
+                # it carries its node id — a `###` side card holding a table least of all.
+                "height": spec.get("height", estimate_text_height(rendered_text, width, "paragraph")),
                 "text": rendered_text,
             }
         if kind in colors:
@@ -1389,7 +1406,7 @@ def _compile_add_research_flow(
                 if section_key in entry_ids:
                     raise PlanError("experiment section keys must be unique")
                 section_id = deterministic_id(target_group["id"], "research_flow", spec["key"], section["key"])
-                section_text = f"## {section['heading']}\n{section['text']}"
+                section_text = stamp_node_id(f"## {section['heading']}\n\n{section['text']}", section_id)
                 section_node = {
                     "id": section_id,
                     "type": "text",

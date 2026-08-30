@@ -425,8 +425,17 @@ class ObsPaperEngineTest(unittest.TestCase):
             patch = compile_request(canvas, flow_request)
             apply_patch(canvas, patch)
             document = CanvasDocument.load(canvas)
-            added = {node["text"].lstrip("# "): node for node in document.nodes if node.get("text", "").startswith("# RQ1")}
+            added = {
+                node["text"].splitlines()[0].lstrip("# "): node
+                for node in document.nodes
+                if node.get("text", "").startswith("# RQ1")
+            }
             self.assertEqual([added[key]["color"] for key in ("RQ1", "RQ1-E", "RQ1-A")], ["6", "4", "3"])
+            for key, node in added.items():
+                self.assertTrue(
+                    node["text"].endswith(f"`{node['id']}`"),
+                    f"{key} must print its own node id as its last line",
+                )
             edges = [edge for edge in document.edges if edge["fromNode"] in {node["id"] for node in added.values()}]
             self.assertTrue(all((edge["fromSide"], edge["toSide"]) == ("bottom", "top") for edge in edges))
 
@@ -933,6 +942,26 @@ class ObsPaperEngineTest(unittest.TestCase):
             }]
             with self.assertRaises(PlanError):
                 compile_request(canvas, self.research_flow_request(nodes, []))
+
+    def test_side_card_with_a_table_is_not_sized_as_a_heading(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = fixture_canvas()
+            data["nodes"][0]["label"] = "Research Flow"
+            canvas = self.write_canvas(Path(directory), data)
+            nodes = [{
+                "key": "impl", "kind": "implementation", "x": 100, "y": 600,
+                "text": "### Impl\n\n| 항목 | 값 |\n|---|---|\n| grid | 2 domain |\n| 산출물 | results/main2_* |",
+            }]
+            apply_patch(canvas, compile_request(canvas, self.research_flow_request(nodes, [])))
+            impl = CanvasDocument.load(canvas).node(deterministic_id("paper", "research_flow", "impl"))
+            self.assertGreater(impl["height"], 70, "a '###' card holding a table must not get the fixed heading height")
+
+    def test_node_id_stamp_is_idempotent(self) -> None:
+        from obs_paper_engine import stamp_node_id
+
+        once = stamp_node_id("## Results\n\nb=7.", "abc123")
+        self.assertTrue(once.endswith("`abc123`"))
+        self.assertEqual(stamp_node_id(once, "abc123"), once, "re-stamping must not duplicate the id")
 
     def test_overleaf_repl_output_is_read_by_marker(self) -> None:
         from overleaf import parse_repl_output
