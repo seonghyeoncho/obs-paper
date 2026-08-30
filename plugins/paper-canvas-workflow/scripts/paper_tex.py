@@ -255,9 +255,11 @@ def apply_citations(escaped: str, commands: list[str]) -> str:
 def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = None,
            consumed: set[str] | None = None, refs: dict[str, list[str]] | None = None,
            drift: list[str] | None = None, extras: dict[str, str] | None = None,
-           label_prefix: str = "sec", has_title: bool = True) -> str:
+           label_prefix: str = "sec", has_title: bool = True,
+           origins: list[tuple[str, list[str]]] | None = None) -> str:
     out: list[str] = []
     paragraph: list[str] = []
+    paragraph_ids: list[str] = []
     pending_figure: tuple[str, bool] | None = None
     prev: dict[str, Any] | None = None
     in_abstract = False
@@ -265,11 +267,17 @@ def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = Non
     counter = {"section": 0, "subsection": 0, "paragraph": 0}
 
     def flush() -> None:
-        nonlocal paragraph
+        nonlocal paragraph, paragraph_ids
         if paragraph:
-            out.append(" ".join(paragraph))
+            block = " ".join(paragraph)
+            out.append(block)
             out.append("")
+            if origins is not None:
+                # Which card produced each sentence, so a change coming back
+                # from LaTeX can be traced to the one card that has to change.
+                origins.append((block, list(zip(paragraph_ids, paragraph))))
             paragraph = []
+            paragraph_ids = []
 
     cited = cited or {}
     consumed = consumed or set()
@@ -370,6 +378,7 @@ def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = Non
         if node["id"] in cited:
             sentence = apply_citations(sentence, cited[node["id"]])
         paragraph.append(sentence)
+        paragraph_ids.append(node["id"])
         prev = node
 
     flush()
@@ -379,7 +388,8 @@ def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = Non
 
 
 def build(canvas: Path, label: str = "paper_v1", drift: list[str] | None = None,
-          extras: dict[str, str] | None = None) -> str:
+          extras: dict[str, str] | None = None,
+          origins: list[tuple[str, list[str]]] | None = None) -> str:
     nodes, edges = load_group(canvas, label)
     cited, consumed = collect_citations(nodes, edges)
 
@@ -398,7 +408,7 @@ def build(canvas: Path, label: str = "paper_v1", drift: list[str] | None = None,
             appendix, cited, consumed, refs, drift, extras,
             label_prefix="app", has_title=False,
         )
-    return render(main, cited, consumed, refs, drift, extras)
+    return render(main, cited, consumed, refs, drift, extras, origins=origins)
 
 
 def main() -> None:
