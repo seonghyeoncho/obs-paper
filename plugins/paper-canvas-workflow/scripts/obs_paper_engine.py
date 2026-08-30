@@ -167,7 +167,9 @@ RESEARCH_FLOW_SIDE_KINDS = frozenset({"source", "table", "figure", "implementati
 
 # Experiment section headings carry the section type alone. Status, configuration,
 # and scoring parameters belong in the experiment title or an implementation card.
-RESEARCH_FLOW_SECTION_HEADINGS = frozenset({"Setup", "Results", "Control", "Sanity/Control"})
+# There is no validity section: whether a run was usable is a property of the run,
+# so its checks live in that experiment's implementation card.
+RESEARCH_FLOW_SECTION_HEADINGS = frozenset({"Setup", "Results"})
 
 
 def display_width(text: str) -> int:

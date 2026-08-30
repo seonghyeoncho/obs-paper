@@ -10,7 +10,6 @@ Read this when a task involves writing or revising research-flow node text: cont
 | Experiment | `# RQ-E3 — <name> (<status>)` | green | title only |
 | Setup | `## Setup` | green | what is compared against what, and why |
 | Results | `## Results` | green | one paragraph per axis, measured facts only |
-| Control | `## Sanity/Control` | green | one bullet per check; findings follow as prose |
 | Interpretation | `# RQ1-A` / `# RQ-E4-A` | yellow | conclusion first, then its condition |
 | Bridge question | no label | orange | one question; colour carries the type |
 | Source | `### Source` | grey | title, cite key, wikilink, Zotero link, one-line relevance |
@@ -36,7 +35,9 @@ What broke and how it was fixed is appendix material: it goes in the Impl card's
 
 An invalidated run is not a green experiment. Green means a measurement someone can rely on, so a run whose numbers are being discarded leaves the flow entirely and becomes a `Log` card beside the run that replaced it. Record why it was discarded, what it cost, and where its outputs sit; do not record its measurements. A number nobody will cite is not worth the space, and keeping it invites someone to read it as evidence later.
 
-What survives such a run is whatever changed the next one: the methodological fact that forced a config change, and any caveat it casts on earlier results measured under the same fault.
+What survives such a run is whatever changed the next one: the methodological fact that forced a config change, and any caveat it casts on earlier results measured under the same fault. Apply the same test to a run that stayed in the flow — a measurement no interpretation ever cites, taken under a fault you later found, is a discarded number that happens to still be on the page.
+
+There is no validity section. Whether a run was usable — completeness, robustness under a swept parameter, data loss, denominators large enough to divide by — is a property of the run, not a finding about the subject, so it belongs in that experiment's implementation card. A green experiment standing in the flow already asserts that its run was sound; the grey card holds the evidence for that assertion. Do not restate a measurement as a check: a bullet saying the gate made no model calls is the same fact the Results already reports.
 
 A value that changes what is being estimated stays in the flow. A threshold that an RQ sweeps is flow content even though it is also configuration.
 
