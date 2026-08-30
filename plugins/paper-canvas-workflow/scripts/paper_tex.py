@@ -54,6 +54,7 @@ CITATION = re.compile(r"~?\\cite[tp]?(?:\[[^\]]*\])?\{[^}]+\}")
 # The placeholder is matched after escaping, where `{}` has become `\{\}`.
 PLACEHOLDER = r"\{\}"
 SECTION_REF = re.compile(r"(\d+(?:\.\d+)*)절")
+TABLE_DIR = "tables"
 
 
 class TexError(RuntimeError):
@@ -234,7 +235,7 @@ def apply_citations(escaped: str, commands: list[str]) -> str:
 
 def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = None,
            consumed: set[str] | None = None, refs: dict[str, list[str]] | None = None,
-           drift: list[str] | None = None) -> str:
+           drift: list[str] | None = None, extras: dict[str, str] | None = None) -> str:
     out: list[str] = []
     paragraph: list[str] = []
     pending_figure: tuple[str, bool] | None = None
@@ -316,9 +317,18 @@ def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = Non
             if kind == "Table":
                 tabular, wide = markdown_table(rest)
                 env = "table*" if wide else "table"
-                out += [f"\\begin{{{env}}}[t]", r"\centering", tabular,
-                        f"\\caption{{{caption}}}", f"\\label{{tab:{number}}}",
-                        f"\\end{{{env}}}", ""]
+                float_ = "\n".join([f"\\begin{{{env}}}[t]", r"\centering", tabular,
+                                    f"\\caption{{{caption}}}", f"\\label{{tab:{number}}}",
+                                    f"\\end{{{env}}}", ""])
+                if extras is None:
+                    out += [float_]
+                else:
+                    # A tabular runs to dozens of lines and buries the prose it
+                    # sits in, so it lives in its own file and the body keeps a
+                    # one-line reference to it.
+                    rel = f"{TABLE_DIR}/table{number}"
+                    extras[f"{rel}.tex"] = float_
+                    out += [f"\\input{{{rel}}}", ""]
             else:
                 if pending_figure is None:
                     raise TexError(f"Figure {number} caption has no image card above it")
@@ -348,7 +358,8 @@ def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = Non
     return "\n".join(out).rstrip() + "\n"
 
 
-def build(canvas: Path, label: str = "paper_v1", drift: list[str] | None = None) -> str:
+def build(canvas: Path, label: str = "paper_v1", drift: list[str] | None = None,
+          extras: dict[str, str] | None = None) -> str:
     nodes, edges = load_group(canvas, label)
     ordered = reading_order(nodes)
     cited, consumed = collect_citations(nodes, edges)
@@ -357,7 +368,7 @@ def build(canvas: Path, label: str = "paper_v1", drift: list[str] | None = None)
     for edge in edges:
         if edge["toNode"] in numbers and edge["fromNode"] not in numbers:
             refs.setdefault(edge["fromNode"], []).append(numbers[edge["toNode"]])
-    return render(ordered, cited, consumed, refs, drift)
+    return render(ordered, cited, consumed, refs, drift, extras)
 
 
 def main() -> None:
@@ -366,20 +377,29 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("canvas", type=Path)
     parser.add_argument("--group", default="paper_v1")
-    parser.add_argument("--out", type=Path)
+    parser.add_argument("--out", type=Path, help="written file, normally main.tex")
+    parser.add_argument("--inline-tables", action="store_true",
+                        help="keep tabulars in the body instead of their own files")
     args = parser.parse_args()
     drift: list[str] = []
+    extras: dict[str, str] | None = None if args.inline_tables or not args.out else {}
     try:
-        body = build(args.canvas, args.group, drift)
+        body = build(args.canvas, args.group, drift, extras)
     except (TexError, OSError, json.JSONDecodeError) as exc:
         raise SystemExit(f"error: {exc}")
     for line in drift:
         print(f"warning: {line}", file=sys.stderr)
-    if args.out:
-        args.out.write_text(body, encoding="utf-8")
-        print(f"{args.out} ({args.out.stat().st_size} bytes)")
-    else:
+    if not args.out:
         print(body, end="")
+        return
+    args.out.write_text(body, encoding="utf-8")
+    written = [f"{args.out} ({args.out.stat().st_size} bytes)"]
+    for rel, content in sorted((extras or {}).items()):
+        target = args.out.parent / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        written.append(f"{target} ({target.stat().st_size} bytes)")
+    print("\n".join(written))
 
 
 if __name__ == "__main__":

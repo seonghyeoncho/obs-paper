@@ -1062,6 +1062,24 @@ class ObsPaperEngineTest(unittest.TestCase):
         self.assertIn("9절", body, "a number matching no arrow is left alone rather than renumbered")
         self.assertTrue(any("9절" in line for line in drift), "and the mismatch is reported")
 
+    def test_paper_tex_puts_each_table_in_its_own_file(self) -> None:
+        from paper_tex import build
+
+        table = "**Table 1**: 표 캡션.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = self.paper_group(Path(directory), [
+                {"x": 100, "y": 0, "text": "# 제목", "color": "6"},
+                {"x": 100, "y": 90, "text": table},
+            ])
+            extras: dict[str, str] = {}
+            body = build(canvas, "paper_v1", None, extras)
+
+        self.assertIn(r"\input{tables/table1}", body, "the body keeps a one-line reference")
+        self.assertNotIn(r"\begin{tabular}", body, "the tabular itself leaves the body")
+        self.assertIn("tables/table1.tex", extras)
+        self.assertIn(r"\begin{tabular}", extras["tables/table1.tex"])
+        self.assertIn(r"\label{tab:1}", extras["tables/table1.tex"], "the float goes with it, label and all")
+
     def test_paper_tex_rejects_a_heading_with_no_level_colour(self) -> None:
         from paper_tex import TexError, build
 
