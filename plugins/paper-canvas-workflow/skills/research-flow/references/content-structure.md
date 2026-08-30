@@ -17,6 +17,7 @@ Read this when a task involves writing or revising research-flow node text: cont
 | Table | `### Table — <caption>` | grey | caption, then the complete table |
 | Params | `### Params — <project>` | grey | two-column table, one per project |
 | Impl | `### Impl — RQ-E<n>` | grey | two-column table, then an optional `**추가 메모**` paragraph |
+| Log | `### Log — RQ-E<n> (<why discarded>)` | grey | a run that produced no usable evidence |
 | Thought | free | red | the user's own; never rewrite it |
 
 An interpretation takes the identifier of whatever it interprets, plus `-A`. An experiment that grew out of a bridge question has no RQ number, so its interpretation takes the experiment number. Bridge questions stay unlabelled: they mark why the next experiment started, not a node to be answered by name.
@@ -33,7 +34,9 @@ Keep them in separate cards. The main downward flow must read correctly when eve
 
 What broke and how it was fixed is appendix material: it goes in the Impl card's `**추가 메모**`, never in Setup, Results, or Control. That covers reruns, config repairs, harness and scorer defects, archived pre-fix cells, and known measurement limitations with their TODO. Green cards state the condition and the measurement as they now stand, without narrating how they got there.
 
-The exception is a failure that changes what the numbers mean. An experiment invalidated by systematic dropout keeps that reason in its Results, because it is the finding; only the repair that followed moves to the memo.
+An invalidated run is not a green experiment. Green means a measurement someone can rely on, so a run whose numbers are being discarded leaves the flow entirely and becomes a `Log` card beside the run that replaced it. Record why it was discarded, what it cost, and where its outputs sit; do not record its measurements. A number nobody will cite is not worth the space, and keeping it invites someone to read it as evidence later.
+
+What survives such a run is whatever changed the next one: the methodological fact that forced a config change, and any caveat it casts on earlier results measured under the same fault.
 
 A value that changes what is being estimated stays in the flow. A threshold that an RQ sweeps is flow content even though it is also configuration.
 

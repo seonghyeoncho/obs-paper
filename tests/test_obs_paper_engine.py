@@ -897,15 +897,18 @@ class ObsPaperEngineTest(unittest.TestCase):
             canvas = self.write_canvas(Path(directory), data)
             nodes = [
                 {"key": "impl", "kind": "implementation", "text": "### Impl\n\n| a | b |", "x": 100, "y": 600},
+                {"key": "log", "kind": "log", "text": "### Log — discarded", "x": 100, "y": 900},
                 {"key": "exp", "kind": "experiment", "text": "RQ1-E", "x": 1000, "y": 600},
             ]
-            apply_patch(canvas, compile_request(canvas, self.research_flow_request(nodes, [["impl", "exp"]])))
+            links = [["impl", "exp"], ["log", "exp"]]
+            apply_patch(canvas, compile_request(canvas, self.research_flow_request(nodes, links)))
             document = CanvasDocument.load(canvas)
-            impl = document.node(deterministic_id("paper", "research_flow", "impl"))
-            self.assertNotIn("color", impl, "side cards stay uncoloured")
-            self.assertTrue(impl["text"].startswith("### Impl"), "side card text is kept verbatim")
-            edge = next(edge for edge in document.edges if edge["fromNode"] == impl["id"])
-            self.assertEqual((edge["fromSide"], edge["toSide"]), ("right", "left"))
+            for key, prefix in (("impl", "### Impl"), ("log", "### Log")):
+                node = document.node(deterministic_id("paper", "research_flow", key))
+                self.assertNotIn("color", node, f"{key} card stays uncoloured")
+                self.assertTrue(node["text"].startswith(prefix), f"{key} text is kept verbatim")
+                edge = next(edge for edge in document.edges if edge["fromNode"] == node["id"])
+                self.assertEqual((edge["fromSide"], edge["toSide"]), ("right", "left"))
 
     def test_side_card_may_not_receive_a_link_from_the_flow(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
