@@ -27,6 +27,7 @@ Treat each native `paper_vN` group as one manuscript-version workspace. The vers
 - Indent a subsection or paragraph heading relative to its parent, then keep every prose card owned by that heading on the same left edge as the heading. Content must never sit to the left of its owning structural heading.
 - Preserve inline LaTeX as `$...$`. Put every display equation in one card enclosed by `$$` and `$$`; never use fenced `math` code blocks.
 - Preserve manuscript wording during layout-only work. Splitting or moving cards does not authorize rewriting or summarizing them.
+- Renaming the system a paper describes is not renaming the project. Change it in prose, table headers, and figure labels; leave config identifiers, result keys, project-scoped card labels, directories, and file names alone. A project and the system it studies are separate names that happen to have started out the same.
 
 ## Mandatory color grammar
 
@@ -60,6 +61,9 @@ After importing or reconstructing a paper version, run `normalize_paper_colors` 
 - Tables and figures never sit in the downward sentence stack. Put each artifact in an outside side lane at its first explicit mention and draw `artifact -> mentioning sentence`.
 - Prefer the outside-left lane for a main-text artifact and the outside-right lane for an Appendix artifact. Use the other free side when this avoids overlap. Later mentions reuse the same artifact through additional edges.
 - A table card contains the complete Markdown table. Set its width independently from prose: use the smallest width at which headers and numeric cells render without clipping, horizontal scrolling, or unintended wrapping. After changing width, refit height. Visually inspect the rendered Canvas and expand in 40px increments until it passes.
+- Where a table prints a ratio next to its own denominator, check the arithmetic. `0.126 (31/212)` is wrong and the table itself says so. Do this whenever a table is added, edited, or reviewed; it costs one division per cell and catches errors no amount of reading will.
+- A figure's labels come from its plotting code, where they are usually the run-mode keys the results are stored under, not the names the paper uses. So a figure does not follow when the manuscript renames something, and prose can say BELAY while the axis still says `polar`. Read the actual image rather than trusting the caption, and compare its labels and values against the table and prose that cite it. The fix belongs in the plotting code as a display-label map; never rename the key, because the results are keyed by it.
+- Regenerating a figure, recomputing a number from results, and editing LaTeX all belong in the project repository, not here. The Canvas is a view. Report the mismatch with enough detail to act on it and leave the artifact to be rebuilt at its source.
 - Size a figure to the actual image aspect ratio and readable labels. Do not substitute a caption, number summary, or placeholder for an available table or figure.
 - Choose reference ports by the dominant center-to-center axis: horizontal displacement uses facing left/right ports, while vertical displacement uses top/bottom ports. This paper-reference routing is independent of the research-flow convention that reserves side-origin arrows for red thought nodes. Straight lateral edges use equal y-centres; straight vertical edges use equal x-centres. Curve only to route around intentional parallel content.
 
@@ -89,6 +93,7 @@ Verify after editing:
 - each Appendix section is in its owning section's right column and in source order;
 - every citation and explicit Appendix/Equation/Figure/Table mention has the required edge;
 - every Table/Figure is outside the prose stack, at its first mention, readable at its own width, and non-overlapping;
+- every printed ratio agrees with its own denominator, and figure labels agree with the table and prose that cite them;
 - section titles span complete section rectangles and sibling sections do not overlap;
 - adjacent complete top-level section rectangles have exactly 120px horizontal gaps;
 - rerunning the deterministic transform makes no further changes.
