@@ -1081,12 +1081,21 @@ class ObsPaperEngineTest(unittest.TestCase):
             "CJK glyphs are double width and must wrap sooner",
         )
 
+        self.assertEqual(
+            estimate_text_height("한 줄짜리 문장이다.", 812, "paragraph"), 51,
+            "one line in an 812px card measures 51px in Obsidian",
+        )
+        self.assertEqual(
+            estimate_text_height("# 서론", 812, "paragraph"), 51,
+            "a heading is a line like any other, not a fixed 70px block",
+        )
+
         one_row = "| a | b |\n|---|---|\n| 1 | 2 |"
         two_rows = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
         self.assertEqual(
             estimate_text_height(two_rows, 560, "paragraph") - estimate_text_height(one_row, 560, "paragraph"),
-            40,
-            "one more table row adds a row's height, rounded to the 10px grid",
+            35,
+            "one more table row adds a row's height",
         )
 
         without_rule = "| a | b |\n| 1 | 2 |"

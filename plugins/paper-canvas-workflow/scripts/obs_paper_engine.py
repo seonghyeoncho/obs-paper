@@ -195,28 +195,39 @@ def display_width(text: str) -> int:
     return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)
 
 
+CARD_PADDING = 24  # chrome below the text; a card is text height plus this
+CARD_LINE = 27
+CARD_TABLE_ROW = 35
+CARD_COLUMNS_PER_PX = 0.119
+
+
 def estimate_text_height(text: str, width: int, kind: str) -> int:
-    """Estimate Obsidian card height; callers may provide an exact height."""
-    # ponytail: calibrated against hand-corrected cards; remeasure if real cards clip.
-    if kind == "heading":
-        return 70
+    """Estimate Obsidian card height; callers may provide an exact height.
+
+    Measured against hand-sized cards: one line of prose in an 812px card is
+    51px and each further line adds 27, which is 24 of padding plus 27 a line.
+    A heading is a line like any other — the old fixed 70px height made a
+    one-line heading half again too tall and a multi-line card far too short.
+
+    Prose lands within a pixel. Tables do not: Obsidian sizes table columns to
+    their content, so a row's height is not a function of the text alone. The
+    estimate here is close but a table card still needs looking at.
+    """
     if kind == "equation":
         return max(100, 40 + 30 * len(text.splitlines()))
-    columns = max(12, (width - 40) * 2 // 21)
-    height = 60
+    columns = max(12, int(width * CARD_COLUMNS_PER_PX))
+    height = CARD_PADDING
     for line in text.splitlines() or [""]:
         stripped = line.strip()
-        if not stripped:
-            height += 12
-        elif _TABLE_RULE.match(stripped):
+        if _TABLE_RULE.match(stripped):
             continue  # the |---| rule renders as a border, not a row
-        elif stripped.startswith("|"):
-            height += 35
-        elif stripped.startswith("#"):
-            height += 34
+        if stripped.startswith("|"):
+            height += CARD_TABLE_ROW
+        elif not stripped:
+            height += CARD_LINE  # a blank line renders at full line height
         else:
-            height += 24 * max(1, -(-display_width(stripped) // columns))
-    return max(70, ((height + 9) // 10) * 10)
+            height += CARD_LINE * max(1, -(-display_width(stripped) // columns))
+    return max(CARD_PADDING + CARD_LINE, height)
 
 
 def estimate_mapping_height(text: str, width: int, *, title: bool = False) -> int:
