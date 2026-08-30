@@ -15,7 +15,14 @@ from pathlib import Path
 from typing import Any
 
 COLUMN_TOLERANCE = 100
-PARAGRAPH_GAP = 30  # 20px keeps a paragraph together, 40px starts a new one
+
+# Paragraph structure is carried by the gap between prose cards: the skill sets
+# 20px inside a paragraph and 40px between them, and the split is visible in the
+# Canvas. The risk is silent drift — resize a card and the paragraphs move with
+# no sign — so any prose-to-prose gap that is neither is reported rather than
+# quietly rounded. Headings and artifacts end a paragraph whatever their gap.
+SENTENCE_GAP, PARAGRAPH_GAP = 20, 40
+GAP_MIDPOINT = (SENTENCE_GAP + PARAGRAPH_GAP) // 2
 
 # A single ACL column fits roughly this many characters at 11pt. An artifact
 # wider than that has to span both columns or it overprints the text beside it.
@@ -32,8 +39,14 @@ SYMBOLS = {
 ESCAPES = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#",
            "_": r"\_", "{": r"\{", "}": r"\}", "~": r"\textasciitilde{}", "^": r"\textasciicircum{}"}
 
+# Heading depth is carried by colour, not by a number in the text and not by
+# position. Numbering a heading means renumbering every sibling and every
+# reference whenever the outline moves, so the Canvas states no numbers and
+# LaTeX does the counting.
+HEADING_LEVEL = {"6": "section", "5": "subsection", "4": "paragraph"}
+
 NODE_ID = re.compile(r"\n*`[0-9a-f]{16}`\s*$")
-HEADING = re.compile(r"^#\s+(?:(\d+(?:\.\d+)*)\s+)?(.*)$")
+HEADING = re.compile(r"^#\s+(.*)$")
 BOLD = re.compile(r"\*\*(.+?)\*\*")
 ARTIFACT = re.compile(r"^\*\*(Table|Figure)\s+(\d+)\*\*\s*[:.]?\s*(.*)$", re.S)
 
@@ -115,6 +128,7 @@ def render(nodes: list[dict[str, Any]]) -> str:
     prev: dict[str, Any] | None = None
     in_abstract = False
     seen_heading = False
+    counter = {"section": 0, "subsection": 0, "paragraph": 0}
 
     def flush() -> None:
         nonlocal paragraph
@@ -139,16 +153,21 @@ def render(nodes: list[dict[str, Any]]) -> str:
 
         heading = HEADING.match(text.splitlines()[0]) if text.startswith("# ") else None
         if heading:
+            level = HEADING_LEVEL.get(node.get("color", ""))
+            if level is None:
+                raise TexError(
+                    f"heading {heading.group(1)[:40]!r} has colour {node.get('color')!r}; "
+                    f"a heading must be purple (section), cyan (subsection), or green (paragraph)"
+                )
             flush()
-            number, title = heading.group(1), heading.group(2).strip()
-            if not seen_heading and number is None and title and "초록" not in title:
-                out.append(f"% title: {title}")  # belongs in the preamble's \title{}
-                out.append("")
+            title = heading.group(1).strip()
+            if not seen_heading and "초록" not in title:
+                out += [f"% title: {title}", ""]  # belongs in the preamble's \title{}
                 seen_heading = True
                 prev = node
                 continue
             seen_heading = True
-            if number is None:
+            if "초록" in title:
                 if in_abstract:
                     out.append(r"\end{abstract}")
                 out += [r"\begin{abstract}", ""]
@@ -157,10 +176,16 @@ def render(nodes: list[dict[str, Any]]) -> str:
                 if in_abstract:
                     out += [r"\end{abstract}", ""]
                     in_abstract = False
-                depth = number.count(".")
-                cmd = "section" if depth == 0 else "subsection" if depth == 1 else "subsubsection"
-                out.append(f"\\{cmd}{{{escape(title)}}}\\label{{sec:{number}}}")
-                out.append("")
+                counter[level] += 1
+                if level == "section":
+                    counter["subsection"] = counter["paragraph"] = 0
+                elif level == "subsection":
+                    counter["paragraph"] = 0
+                tag = ".".join(
+                    str(counter[k]) for k in ("section", "subsection", "paragraph")
+                    if counter[k] or k == "section"
+                )
+                out += [f"\\{level}{{{escape(title)}}}\\label{{sec:{tag}}}", ""]
             prev = node
             continue
 

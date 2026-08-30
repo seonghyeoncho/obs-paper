@@ -25,7 +25,7 @@ Treat each native `paper_vN` group as one manuscript-version workspace. The vers
 
 It emits a fragment, never a whole document. The template owns the preamble, author block, and bibliography; the Canvas owns the abstract, headings, prose, tables, and figures. They stay in separate files so that pushing a rebuilt body replaces only generated content and leaves what co-authors edit alone. Add `\input{body}` to the template once, in place of its abstract and placeholder section.
 
-What the generator reads from the layout: sections run left to right and each column reads downward; heading level comes from the number in the heading text, so `# 2.1 구조` is a subsection and an unnumbered heading is the abstract; a gap under 30px keeps a paragraph together and a wider one starts the next. A figure is an image card followed by its caption card. An artifact too wide for one column becomes a starred float, judged from the widest table row and from the image card's aspect ratio — get this wrong and the artifact overprints the text beside it.
+What the generator reads from the layout: sections run left to right and each column reads downward; heading depth comes from the card's colour, and the first heading is the title while a heading naming the abstract opens it; a gap under 30px keeps a paragraph together and a wider one starts the next. Section numbers in the output are generated, so `\label{sec:5.2.1}` exists even though the Canvas names no numbers. A figure is an image card followed by its caption card. An artifact too wide for one column becomes a starred float, judged from the widest table row and from the image card's aspect ratio — get this wrong and the artifact overprints the text beside it.
 
 Bare Greek and maths characters are moved into maths mode, since the Canvas renders `θ` directly and pdflatex will not. Node ids are stripped as the metadata they are.
 
@@ -43,15 +43,18 @@ Generation is one way. Nothing reads LaTeX back into the Canvas, so an edit made
 
 ## Mandatory color grammar
 
-Match the established `paper_v1` Skill Following palette exactly:
+A heading card is written `# <title>` with no number, and its colour carries the outline depth:
 
-- Color `"6"` (purple): every structural manuscript heading card represented with `# `, including section, subsection, paragraph, and Appendix headings.
-- Color `"4"` (green): only the contribution lead and its contribution branch cards.
+- Color `"6"` (purple): section. Also the manuscript title and the abstract heading, which are not sections but sit at the top level.
+- Color `"5"` (cyan): subsection.
+- Color `"4"` (green): paragraph heading, and separately the contribution lead and its branch cards. The two never collide: a heading starts with `# `, a contribution card does not.
 - No `color` field: ordinary prose, display equations, citation/source cards, tables, figures, and embedded prompt or schema content such as `##` lines inside a content block.
 
-The paper workflow must not create red `"1"`, orange `"2"`, yellow `"3"`, or cyan `"5"` manuscript nodes. Those colors belong to author thoughts, camera-ready mapping, camera-ready changes, or other workflows. Preserve such user-authored or stage-specific annotations by excluding them from paper color normalization.
+Never number a heading. Numbering means renumbering every sibling and every reference whenever the outline moves, and the outline moves often; the Canvas states no numbers and LaTeX does the counting. The outline stops at paragraph — there is no subsubsection.
 
-For `insert_blocks`, use `kind: "heading"` with `# ` text for a structural heading; it becomes purple automatically. Use `role: "contribution"` for every contribution card; it becomes green automatically. Do not pass raw `color` values.
+The paper workflow must not create red `"1"`, orange `"2"`, or yellow `"3"` manuscript nodes. Those colors belong to author thoughts, camera-ready mapping, and camera-ready changes. Preserve such user-authored or stage-specific annotations by excluding them from paper color normalization.
+
+For `insert_blocks`, use `kind: "heading"` with `# ` text and `level` of `section`, `subsection`, or `paragraph`; the colour follows. Use `role: "contribution"` for every contribution card; it becomes green automatically. Do not pass raw `color` values.
 
 After importing or reconstructing a paper version, run `normalize_paper_colors` once with the complete explicit list of manuscript-owned, non-group node IDs and the contribution subset. Exclude mapping annotations, reviewer cards, author notes, and camera-ready change nodes. A second identical normalization must produce zero operations.
 

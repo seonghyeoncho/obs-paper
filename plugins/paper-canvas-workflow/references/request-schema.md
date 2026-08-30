@@ -86,7 +86,7 @@ After verifying the Zotero stored PDF, create one sentence-level Canvas in the v
 }
 ```
 
-Blocks use `heading`, `sentence`, or `equation`; sentences require a stable paragraph key, headings may use indentation `level`, and equations require `$$` delimiters. `paper-flow-build` accepts only a reviewed JSON spec, creates `<Vault>/Paper/<sanitized full title>.canvas`, refuses a conflicting overwrite, and links its source card to Zotero. `--replace` intentionally rebuilds after copying the old Canvas to `Paper/.canvas-history/`. Automated PDF parsing is suspended and must not be invoked. A future PDF-flow workflow must use semantic prose blocks and inherit only the `paper` color grammar rather than the manuscript's sentence-splitting rule.
+A manuscript `heading` block also takes `level` of `section`, `subsection`, or `paragraph`, which sets its colour; headings are never numbered. Blocks use `heading`, `sentence`, or `equation`; sentences require a stable paragraph key, headings may use indentation `level`, and equations require `$$` delimiters. `paper-flow-build` accepts only a reviewed JSON spec, creates `<Vault>/Paper/<sanitized full title>.canvas`, refuses a conflicting overwrite, and links its source card to Zotero. `--replace` intentionally rebuilds after copying the old Canvas to `Paper/.canvas-history/`. Automated PDF parsing is suspended and must not be invoked. A future PDF-flow workflow must use semantic prose blocks and inherit only the `paper` color grammar rather than the manuscript's sentence-splitting rule.
 
 ## Safe execution
 

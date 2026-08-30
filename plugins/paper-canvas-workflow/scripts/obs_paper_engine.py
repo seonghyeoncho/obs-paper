@@ -171,6 +171,12 @@ RESEARCH_FLOW_SIDE_KINDS = frozenset({"source", "table", "figure", "implementati
 # so its checks live in that experiment's implementation card.
 RESEARCH_FLOW_SECTION_HEADINGS = frozenset({"Setup", "Results"})
 
+# Manuscript outline depth is carried by colour. Numbering a heading would mean
+# renumbering its siblings and every reference whenever the outline moves, so the
+# Canvas states no numbers and LaTeX does the counting. The outline stops at
+# paragraph; there is no subsubsection.
+PAPER_HEADING_COLOR = {"section": "6", "subsection": "5", "paragraph": "4"}
+
 
 def stamp_node_id(text: str, node_id: str) -> str:
     """End a managed card with its own node id so it can be addressed directly.
@@ -414,6 +420,9 @@ def _compile_insert_blocks(
         role = block.get("role", "ordinary")
         if role not in {"ordinary", "contribution"}:
             raise PlanError("paper block role must be ordinary or contribution")
+        level = block.get("level", "section")
+        if kind == "heading" and level not in PAPER_HEADING_COLOR:
+            raise PlanError(f"paper heading level must be one of {sorted(PAPER_HEADING_COLOR)}")
         if "color" in block:
             raise PlanError("paper block colors are derived from kind and role")
         if kind == "heading" and not text.startswith("# "):
@@ -444,7 +453,7 @@ def _compile_insert_blocks(
                 "text": text,
             }
         )
-        expected_color = "4" if role == "contribution" else "6" if kind == "heading" else None
+        expected_color = "4" if role == "contribution" else PAPER_HEADING_COLOR[level] if kind == "heading" else None
         if expected_color:
             after["color"] = expected_color
         else:
@@ -613,7 +622,12 @@ def _compile_normalize_paper_colors(
                 raise PlanError("contribution nodes must be text cards")
             after["color"] = "4"
         elif node.get("type") == "text" and node.get("text", "").startswith("# "):
-            after["color"] = "6"
+            # A heading's colour is its outline depth, so normalising must not
+            # flatten a subsection or paragraph back to section. Only a heading
+            # carrying no depth at all falls back to section.
+            after["color"] = (
+                node["color"] if node.get("color") in set(PAPER_HEADING_COLOR.values()) else "6"
+            )
         else:
             after.pop("color", None)
         _append_operation(
