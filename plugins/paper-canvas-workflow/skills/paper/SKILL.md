@@ -19,6 +19,18 @@ Treat each native `paper_vN` group as one manuscript-version workspace. The vers
 - Use `pair_appendix_columns` for section-owned Appendix lanes, `normalize_equations` for fenced-math conversion, `normalize_paper_colors` for the complete manuscript-owned node set, `compact_sections` for ordered top-level section rectangles, `move_nodes` for an explicit managed set, and `shift_sibling_group` only for a required rigid-body collision shift.
 - Every mutation request names exact node IDs. Do not infer a broad deletion or movement set from coordinates alone.
 
+## Assembling the LaTeX
+
+`../../scripts/paper_tex.py <canvas> --group paper_vN --out body.tex` reads a manuscript group and emits a LaTeX body.
+
+It emits a fragment, never a whole document. The template owns the preamble, author block, and bibliography; the Canvas owns the abstract, headings, prose, tables, and figures. They stay in separate files so that pushing a rebuilt body replaces only generated content and leaves what co-authors edit alone. Add `\input{body}` to the template once, in place of its abstract and placeholder section.
+
+What the generator reads from the layout: sections run left to right and each column reads downward; heading level comes from the number in the heading text, so `# 2.1 구조` is a subsection and an unnumbered heading is the abstract; a gap under 30px keeps a paragraph together and a wider one starts the next. A figure is an image card followed by its caption card. An artifact too wide for one column becomes a starred float, judged from the widest table row and from the image card's aspect ratio — get this wrong and the artifact overprints the text beside it.
+
+Bare Greek and maths characters are moved into maths mode, since the Canvas renders `θ` directly and pdflatex will not. Node ids are stripped as the metadata they are.
+
+Generation is one way. Nothing reads LaTeX back into the Canvas, so an edit made in Overleaf is lost on the next rebuild unless it is brought back to the Canvas first.
+
 ## Manuscript grammar
 
 - Preserve source order and distinguish section, subsection, paragraph, sentence, display equation, citation, table, figure, and Appendix content before laying out nodes.
