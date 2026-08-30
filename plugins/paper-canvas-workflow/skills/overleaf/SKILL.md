@@ -1,6 +1,6 @@
 ---
 name: overleaf
-description: Create and read a project's Overleaf manuscript from a research project — copy a LaTeX template into a new project, list projects, read entitlements, download the source, or trash a project. Use when connecting a project to Overleaf or pulling the manuscript down; writing files back into Overleaf is not supported yet.
+description: Create and read a project's Overleaf manuscript from a research project — copy a LaTeX template into a new project, list projects, read entitlements, download the source, or trash a project. Use when connecting a project to Overleaf or pulling the manuscript down. Uploading the manuscript is deliberately left to the author.
 ---
 
 # Overleaf
@@ -43,4 +43,10 @@ Record the resulting project id in the project's `project.md` so later work does
 
 Most of the user's projects are owned by collaborators and reachable with `readWrite`. Treat someone else's project as read-only unless the user says otherwise, and never trash one.
 
-Writing files back into Overleaf is not implemented. The upload endpoint has not been verified, so do not improvise one and do not fall back to driving the UI: pushing a file wholesale would silently overwrite whatever a co-author changed since the last push, and Overleaf loses comments and track changes on external writes. Until a verified path exists with a check for remote changes, tell the user that push is unavailable.
+## Uploading is the author's job, on purpose
+
+Generate the manuscript locally with `paper_tex.py` and hand the author the path. Do not upload it, and do not offer to.
+
+This is a decision, not a missing feature. It was built and then removed. Overleaf's upload endpoint needs a folder id that only its websocket hands out, so uploading has to go through the browser agent — the one non-deterministic step in an otherwise verifiable pipeline, which then needs a hash guard to stand in for judgement the author already has when they look at the file. Overleaf also drops comments and track changes on external writes, and the author can see what is there before overwriting it. Putting the file in place takes seconds and happens rarely.
+
+So do not improvise an upload, do not drive the UI to paste content, and do not treat this as a gap to close. Say the file is ready and where it is.
