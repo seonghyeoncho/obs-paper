@@ -44,6 +44,7 @@ def _metadata(name: str, repository: Path | None) -> str:
         'overleaf_project: ""\n'
         'overleaf_template: ""\n'
         'overleaf_body: ""\n'
+        'paper_dir: "docs/paper"\n'
         "---\n\n"
         f"# {name}\n"
     )

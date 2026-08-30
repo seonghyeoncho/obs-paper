@@ -45,7 +45,9 @@ Most of the user's projects are owned by collaborators and reachable with `readW
 
 ## Uploading is the author's job, on purpose
 
-Generate the manuscript locally with `paper_tex.py` and hand the author the path. Do not upload it, and do not offer to.
+Generate the manuscript into the project's paper directory with `paper_tex.py` and hand the author the path. Do not upload it, and do not offer to.
+
+The body is pasted into `acl_latex.tex` rather than included, so a collaborator opening the project sees the manuscript instead of a one-line include. The table and figure files are separate and are uploaded once, since the pasted body still refers to them.
 
 This is a decision, not a missing feature. It was built and then removed. Overleaf's upload endpoint needs a folder id that only its websocket hands out, so uploading has to go through the browser agent — the one non-deterministic step in an otherwise verifiable pipeline, which then needs a hash guard to stand in for judgement the author already has when they look at the file. Overleaf also drops comments and track changes on external writes, and the author can see what is there before overwriting it. Putting the file in place takes seconds and happens rarely.
 
