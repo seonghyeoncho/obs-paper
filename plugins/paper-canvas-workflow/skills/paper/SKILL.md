@@ -5,11 +5,12 @@ description: "Create or update a sentence-level academic manuscript view inside 
 
 # Paper
 
-Treat each native `paper_vN` group as one manuscript-version workspace. The repository manuscript is the publication source of truth; the Canvas is its sentence-level reading and revision view.
+Treat each native `paper_vN` group as one manuscript-version workspace. The versions are stages, not copies: `paper_v1` is the Korean draft and the author's working-out, `paper_v2` is the English translation that gets submitted, and `rebuttal` and `camera_ready` follow. The Canvas is never the publication source of truth — where a project records an Overleaf project, that manuscript is; otherwise the repository manuscript is.
 
 ## Deterministic automation
 
 - Read `../../references/request-schema.md` before authoring a request.
+- Read `references/korean-prose.md` before writing or revising Korean manuscript prose. Its rules deliberately differ from the research-flow ones; layout-only work does not need it.
 - For supported paper operations, do not edit Canvas JSON directly. Use `../../scripts/obs_paper.py` with a schema-version-1 `paper` request.
 - Run `inspect` to resolve exact node IDs, `plan` to produce a SHA-bound patch, `apply` with the adjacent action log, and `validate` after writing. A second `plan` with the same request must contain zero operations.
 - `group_appendix` requires the owning `paper_vN` group, the complete explicit member-node list, the section label, and normally 20px padding. If the computed group would capture any unlisted node, stop and correct the request rather than widening the group.
