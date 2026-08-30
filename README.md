@@ -18,7 +18,7 @@ It provides nine skills:
 
 ```bash
 codex plugin marketplace add seonghyeoncho/obs-paper --ref main
-codex plugin add paper-canvas-workflow@obs-paper
+codex plugin add obspaper@obs-paper
 ```
 
 Start a new Codex task after installation so the skills are loaded.
@@ -27,7 +27,7 @@ Start a new Codex task after installation so the skills are loaded.
 
 ```bash
 codex plugin marketplace upgrade obs-paper
-codex plugin add paper-canvas-workflow@obs-paper
+codex plugin add obspaper@obs-paper
 ```
 
 Start a new Codex task after updating.
@@ -36,7 +36,7 @@ Start a new Codex task after updating.
 
 ```bash
 claude plugin marketplace add seonghyeoncho/obs-paper
-claude plugin install paper-canvas-workflow@obs-paper --scope user
+claude plugin install obspaper@obs-paper --scope user
 ```
 
 Start a new Claude Code session after installation, or run `/reload-plugins` in an existing session.
@@ -45,10 +45,16 @@ Start a new Claude Code session after installation, or run `/reload-plugins` in 
 
 ```bash
 claude plugin marketplace update obs-paper
-claude plugin update paper-canvas-workflow@obs-paper
+claude plugin update obspaper@obs-paper
 ```
 
 Restart Claude Code after updating.
+
+The plugin was called `paper-canvas-workflow` before 0.9.0. A rename does not upgrade in place, so remove the old one first:
+
+```bash
+claude plugin uninstall paper-canvas-workflow@obs-paper
+```
 
 ## What it edits
 
@@ -57,15 +63,15 @@ The plugin can initialize or import `<Vault>/Projects/<Project>/`, works with it
 ## Unified vault and Zotero
 
 ```bash
-python plugins/paper-canvas-workflow/scripts/obs_paper.py project-init /path/to/NLP "My Project" --repository /path/to/repo
-python plugins/paper-canvas-workflow/scripts/obs_paper.py project-import /path/to/NLP "My Project" source.canvas --repository /path/to/repo
-python plugins/paper-canvas-workflow/scripts/zotero_bridge.py status
-python plugins/paper-canvas-workflow/scripts/zotero_bridge.py project-setup "/path/to/NLP/Projects/My Project"
-python plugins/paper-canvas-workflow/scripts/zotero_bridge.py search "paper title"
-python plugins/paper-canvas-workflow/scripts/zotero_bridge.py record-search "/path/to/NLP/Projects/My Project" search.json
-python plugins/paper-canvas-workflow/scripts/zotero_bridge.py attach ZOTERO_ITEM_KEY paper.pdf
-python plugins/paper-canvas-workflow/scripts/zotero_bridge.py audit "/path/to/NLP/Projects/My Project"
-python plugins/paper-canvas-workflow/scripts/obs_paper.py paper-flow-build "/path/to/NLP/Projects/My Project" paper-flow.json
+python plugins/obspaper/scripts/obs_paper.py project-init /path/to/NLP "My Project" --repository /path/to/repo
+python plugins/obspaper/scripts/obs_paper.py project-import /path/to/NLP "My Project" source.canvas --repository /path/to/repo
+python plugins/obspaper/scripts/zotero_bridge.py status
+python plugins/obspaper/scripts/zotero_bridge.py project-setup "/path/to/NLP/Projects/My Project"
+python plugins/obspaper/scripts/zotero_bridge.py search "paper title"
+python plugins/obspaper/scripts/zotero_bridge.py record-search "/path/to/NLP/Projects/My Project" search.json
+python plugins/obspaper/scripts/zotero_bridge.py attach ZOTERO_ITEM_KEY paper.pdf
+python plugins/obspaper/scripts/zotero_bridge.py audit "/path/to/NLP/Projects/My Project"
+python plugins/obspaper/scripts/obs_paper.py paper-flow-build "/path/to/NLP/Projects/My Project" paper-flow.json
 ```
 
 Each project uses an exact-name Zotero Collection as its literature source of truth. Selected papers and their stored PDF attachments live in Zotero, vault-wide sentence-level paper Canvases live under `Paper/`, only the project Collection is exported to `references.bib`, and searches are appended to `searches.jsonl`. No paper PDF is copied into Obsidian. Export is blocked if it would remove a citation key already used by the project. The Zotero bridge uses the desktop Local API. Reads require no account API key; Zotero 10+ writes request approval in Zotero at runtime. Better BibTeX is optional and preferred for stable LaTeX citation keys. External scholarly search remains separate from Zotero library search.
@@ -77,7 +83,7 @@ The CLI compiles a human-readable JSON request into a SHA-bound Canvas patch, ap
 `nodes` reads cards by exact ID, returning each card's text, group, colour, geometry, and edges on both sides. Managed research-flow cards print their own ID as their last line, so a card can be addressed without searching the Canvas.
 
 ```bash
-python plugins/paper-canvas-workflow/scripts/obs_paper.py nodes "/path/to/Project.canvas" rfparams00000001 rfanswer1rq10001
+python plugins/obspaper/scripts/obs_paper.py nodes "/path/to/Project.canvas" rfparams00000001 rfanswer1rq10001
 ```
 
 ## LaTeX
@@ -85,7 +91,7 @@ python plugins/paper-canvas-workflow/scripts/obs_paper.py nodes "/path/to/Projec
 `paper_tex.py` assembles a `paper_vN` group into a LaTeX body — abstract, headings whose depth comes from the card's colour, paragraphs from the 20/40px gaps, Markdown tables as `booktabs` tabulars, and image cards as figures. Section numbers and cross-references are generated, so the Canvas never states a number that could go stale. An artifact too wide for one column becomes a starred float.
 
 ```bash
-python plugins/paper-canvas-workflow/scripts/paper_tex.py "/path/to/Project.canvas" --group paper_v1 --out main.tex
+python plugins/obspaper/scripts/paper_tex.py "/path/to/Project.canvas" --group paper_v1 --out main.tex
 ```
 
 Each table is written to `tables/tableN.tex` beside it and the body keeps a one-line `\input`, so a seventeen-row tabular does not bury the prose around it. Appendix material — anything in a Canvas sub-group labelled for an appendix — goes to `appendix.tex`. It emits a body fragment, not a whole document: the template keeps the preamble, author block, and bibliography. `paper_pull.py` runs the other way: it compares a manuscript pulled from Overleaf against the Canvas and names the card behind each changed paragraph. It reports only — turning a LaTeX edit back into prose cards is a judgement, so the cards are named and you edit them.
@@ -95,9 +101,9 @@ Each table is written to `tables/tableN.tex` beside it and the body keeps a one-
 Overleaf publishes no project API, and its git and Zotero integrations are paid-only. `overleaf.py` therefore drives Overleaf as authenticated HTTP inside a signed-in [Aside](https://docs.aside.com) browser session, which needs the Aside CLI installed. A new project is a copy of your own LaTeX template rather than a blank project, so it arrives with its document class and bibliography file already in place.
 
 ```bash
-python plugins/paper-canvas-workflow/scripts/overleaf.py list
-python plugins/paper-canvas-workflow/scripts/overleaf.py clone <template_id> --name '[ARR 10] Paper Title'
-python plugins/paper-canvas-workflow/scripts/overleaf.py download <project_id> --out paper.zip
+python plugins/obspaper/scripts/overleaf.py list
+python plugins/obspaper/scripts/overleaf.py clone <template_id> --name '[ARR 10] Paper Title'
+python plugins/obspaper/scripts/overleaf.py download <project_id> --out paper.zip
 ```
 
 Record the resulting project id as `overleaf_project` in the project's `project.md`. Putting the generated file into Overleaf is left to the author on purpose: the upload endpoint needs a folder id only Overleaf's websocket exposes, so automating it would mean driving the browser — the one non-deterministic step in an otherwise verifiable pipeline — and Overleaf drops comments and track changes on external writes.
@@ -148,10 +154,10 @@ Every destructive migration uses explicit node and edge IDs. `remove_items` reje
 `map_issue` produces a compact orange cluster: one title plus separate Asked, Evidence, Status, Done when, and Change nodes. It accepts exactly one manuscript target and connects only the title. Paper references infer left/right or top/bottom ports from the dominant geometric direction.
 
 ```bash
-python plugins/paper-canvas-workflow/scripts/obs_paper.py inspect paper.canvas --group-label paper_v1
-python plugins/paper-canvas-workflow/scripts/obs_paper.py plan paper.canvas request.json --output patch.json
-python plugins/paper-canvas-workflow/scripts/obs_paper.py apply paper.canvas patch.json --log CANVAS_ACTION_LOG.md
-python plugins/paper-canvas-workflow/scripts/obs_paper.py validate paper.canvas
+python plugins/obspaper/scripts/obs_paper.py inspect paper.canvas --group-label paper_v1
+python plugins/obspaper/scripts/obs_paper.py plan paper.canvas request.json --output patch.json
+python plugins/obspaper/scripts/obs_paper.py apply paper.canvas patch.json --log CANVAS_ACTION_LOG.md
+python plugins/obspaper/scripts/obs_paper.py validate paper.canvas
 ```
 
 Re-running `plan` after a successful apply must produce an empty `operations` array.

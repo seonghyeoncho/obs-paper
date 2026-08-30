@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-SCRIPTS = Path(__file__).parents[1] / "plugins/paper-canvas-workflow/scripts"
+SCRIPTS = Path(__file__).parents[1] / "plugins/obspaper/scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from obs_project import ProjectError, build_paper_flow, import_project, init_project, resolve_project  # noqa: E402

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPTS = Path(__file__).parents[1] / "plugins/paper-canvas-workflow/scripts"
+SCRIPTS = Path(__file__).parents[1] / "plugins/obspaper/scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from obs_paper_engine import (  # noqa: E402
