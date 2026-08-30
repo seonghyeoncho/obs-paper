@@ -934,6 +934,21 @@ class ObsPaperEngineTest(unittest.TestCase):
             with self.assertRaises(PlanError):
                 compile_request(canvas, self.research_flow_request(nodes, []))
 
+    def test_overleaf_repl_output_is_read_by_marker(self) -> None:
+        from overleaf import parse_repl_output
+
+        payload, cwd = parse_repl_output(
+            "✔︎ Opened a new tab and set it active: tabs[0]\n"
+            '__OVERLEAF_JSON__{"id": "abc", "name": "[ARR 10] Title"}\n'
+            "__OVERLEAF_PWD__/Users/x/.aside/u/0/sessions/2026-08-31_ab\n"
+            "[ok | 412ms]"
+        )
+        self.assertEqual(payload["id"], "abc")
+        self.assertEqual(cwd, "/Users/x/.aside/u/0/sessions/2026-08-31_ab")
+
+        empty, _ = parse_repl_output("✔︎ trace only\n[ok | 5ms]")
+        self.assertEqual(empty, {}, "a run that emitted nothing must not look successful")
+
     def test_estimate_text_height_counts_cjk_and_tables(self) -> None:
         korean = "가나다라마바사아자차카타파하" * 3
         latin = "abcdefghijklmn" * 3

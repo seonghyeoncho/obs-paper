@@ -33,7 +33,7 @@ Treat the user's research notes and existing Obsidian Canvas as paired research 
 - Treat every RQ and bridge question as its own literature-search unit. Link each selected paper beside the narrowest question it answers; never pool project literature in a detached bottom cluster. Reuse one Zotero item, PDF, bibliography entry, and per-paper Canvas, but create a separate target-specific literature card when the same paper supports multiple questions.
 - Separate measured facts from interpretation when adding research content. Every numerical claim records its denominator, pooling unit, cohort/configuration, and primary source. Every interpretation remains traceable to the relevant evidence card.
 - Do not silently erase superseded reasoning. Keep a concise correction note and connect or position it with the corrected claim.
-- The repository-defined manuscript remains the publication source of truth unless the user explicitly designates the Canvas as the source. Canvas edits do not authorize unrelated manuscript rewrites, and manuscript edits do not authorize wholesale Canvas synchronization.
+- The Canvas is never the publication source of truth. Where a project records an Overleaf project, that manuscript is the source; otherwise the repository-defined manuscript is. Canvas edits do not authorize unrelated manuscript rewrites, and manuscript edits do not authorize wholesale Canvas synchronization.
 
 ## Canvas grammar
 

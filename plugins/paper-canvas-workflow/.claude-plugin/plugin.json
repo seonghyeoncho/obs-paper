@@ -1,7 +1,7 @@
 {
   "name": "paper-canvas-workflow",
-  "description": "Manage academic projects, Zotero-linked paper libraries and PDF flows, research flows, rebuttals, and camera-ready manuscripts in Obsidian Canvas.",
-  "version": "0.5.0",
+  "description": "Manage academic projects, Zotero-linked paper libraries and PDF flows, Overleaf manuscripts, research flows, rebuttals, and camera-ready manuscripts in Obsidian Canvas.",
+  "version": "0.6.0",
   "author": {
     "name": "seonghyeoncho",
     "url": "https://github.com/seonghyeoncho"

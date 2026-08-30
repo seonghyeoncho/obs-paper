@@ -2,9 +2,10 @@
 
 Obs Paper is a Codex plugin for managing academic-paper workflows in an existing [Obsidian Canvas](https://obsidian.md/canvas).
 
-It provides eight skills:
+It provides nine skills:
 
 - `project-library`: unified-vault project setup, migration, Zotero library access, PDF storage, and Canvas citation links
+- `overleaf`: copy a LaTeX template into a new Overleaf project and pull the manuscript source down
 - `paper`: sentence-level manuscript layout inside versioned paper groups
 - `research-flow`: RQ, experiment, evidence, and interpretation graphs
 - `node`: answer questions about specific cards addressed by their node IDs, fetched by direct lookup
@@ -78,6 +79,18 @@ The CLI compiles a human-readable JSON request into a SHA-bound Canvas patch, ap
 ```bash
 python plugins/paper-canvas-workflow/scripts/obs_paper.py nodes "/path/to/Project.canvas" rfparams00000001 rfanswer1rq10001
 ```
+
+## Overleaf
+
+Overleaf publishes no project API, and its git and Zotero integrations are paid-only. `overleaf.py` therefore drives Overleaf as authenticated HTTP inside a signed-in [Aside](https://docs.aside.com) browser session, which needs the Aside CLI installed. A new project is a copy of your own LaTeX template rather than a blank project, so it arrives with its document class and bibliography file already in place.
+
+```bash
+python plugins/paper-canvas-workflow/scripts/overleaf.py list
+python plugins/paper-canvas-workflow/scripts/overleaf.py clone <template_id> --name '[ARR 10] Paper Title'
+python plugins/paper-canvas-workflow/scripts/overleaf.py download <project_id> --out paper.zip
+```
+
+Record the resulting project id as `overleaf_project` in the project's `project.md`. Writing files back into Overleaf is not supported yet.
 
 | Workflow | Actions |
 |---|---|
