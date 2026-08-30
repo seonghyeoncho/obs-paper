@@ -35,11 +35,13 @@ A tabular runs to dozens of lines — one of POLAR's is seventeen rows — and b
 
 Appendix material is whatever sits in a sub-group whose label names an appendix, per the section-paired layout below. It goes to `appendix.tex` with its headings labelled `app:` rather than `sec:`, so an appendix section cannot collide with a body section of the same number. The file holds only what follows `\appendix`; the template declares that. A manuscript with no appendix group produces no such file.
 
-It emits a fragment, never a whole document. `acl_latex.tex` stays the compile target and pulls the body in with `\input{main}`; the generated file only ever holds body content.
+Write the output into the project's paper directory — `<repository>/<paper_dir>` from `project.md`, normally `docs/paper` — so the generated files sit beside the manuscript's own figures and the author compiles in one place. Never leave them in a temporary directory.
+
+It emits a fragment, never a whole document. The body is pasted into `acl_latex.tex` by hand rather than pulled in with `\input`, because a collaborator opening the project has to see the manuscript rather than a one-line include. Tables and the appendix stay separate and *are* included, so the pasted body carries its `\input{tables/…}` lines with it and `tables/` and `figs/` have to be in the project too.
 
 So the template owns everything structural: `\documentclass`, the preamble, the author block, `\begin{document}`, `\bibliography`, and `\appendix`. Never emit any of those. `\appendix` in particular belongs to the template — appendix material, when a manuscript has any, goes to its own file that the template inputs after that declaration, so the generator never decides where the appendix begins.
 
-The Canvas owns the abstract, headings, prose, tables, and figures. Keeping the two apart is what lets a rebuild replace only generated content and leave what co-authors edit alone. Ask what the generated file should be called and record it as `overleaf_body` in `project.md`; the author adds the matching `\input` once. Putting the file into Overleaf is the author's job — see the `overleaf` skill for why that is deliberate.
+The Canvas owns the abstract, headings, prose, tables, and figures. Ask what the generated body file should be called and record it as `overleaf_body` in `project.md`. Putting anything into Overleaf is the author's job — see the `overleaf` skill for why that is deliberate.
 
 What the generator reads from the layout: sections run left to right and each column reads downward; heading depth comes from the card's colour, and the first heading is the title while a heading naming the abstract opens it; a gap under 30px keeps a paragraph together and a wider one starts the next. Section numbers in the output are generated, so `\label{sec:5.2.1}` exists even though the Canvas names no numbers. A figure is an image card followed by its caption card. An artifact too wide for one column becomes a starred float, judged from the widest table row and from the image card's aspect ratio — get this wrong and the artifact overprints the text beside it.
 
