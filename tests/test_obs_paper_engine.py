@@ -18,6 +18,7 @@ from obs_paper_engine import (  # noqa: E402
     compile_document,
     compile_request,
     deterministic_id,
+    estimate_text_height,
     inspect_canvas,
     node_rect,
 )
@@ -428,6 +429,39 @@ class ObsPaperEngineTest(unittest.TestCase):
             self.assertEqual([added[key]["color"] for key in ("RQ1", "RQ1-E", "RQ1-A")], ["6", "4", "3"])
             edges = [edge for edge in document.edges if edge["fromNode"] in {node["id"] for node in added.values()}]
             self.assertTrue(all((edge["fromSide"], edge["toSide"]) == ("bottom", "top") for edge in edges))
+
+    def test_research_flow_links_literature_to_exact_question(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = fixture_canvas()
+            data["nodes"][0].update({"label": "Research Flow", "width": 3000})
+            data["nodes"].append(
+                {"id": "rq", "type": "text", "x": 1200, "y": 600, "width": 560, "height": 120, "text": "# RQ1", "color": "6"}
+            )
+            canvas = self.write_canvas(Path(directory), data)
+            request = {
+                "schema_version": 1,
+                "workflow": "research-flow",
+                "target": {"group_label": "Research Flow"},
+                "actions": [{
+                    "op": "link_literature",
+                    "key": "smith2026-rq1",
+                    "target_id": "rq",
+                    "title": "A Relevant Paper",
+                    "citekey": "smith2026",
+                    "item_key": "ABCD1234",
+                    "relevance": "Defines the comparison used by RQ1.",
+                    "lane": "right",
+                }],
+            }
+            patch = compile_request(canvas, request)
+            apply_patch(canvas, patch)
+            document = CanvasDocument.load(canvas)
+            card = next(node for node in document.nodes if "zotero://select/library/items/ABCD1234" in node.get("text", ""))
+            edge = next(edge for edge in document.edges if edge["fromNode"] == card["id"] and edge["toNode"] == "rq")
+            self.assertEqual((edge["fromSide"], edge["toSide"]), ("left", "right"))
+            self.assertNotIn("color", card)
+            self.assertNotIn("Paper flow", card["text"])
+            self.assertEqual(compile_request(canvas, request)["operations"], [])
 
     def test_camera_ready_clone_excludes_mapping_and_marks_changes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -847,6 +881,36 @@ class ObsPaperEngineTest(unittest.TestCase):
             self.assertNotIn("stale", document.node_map())
             self.assertNotIn("stale-edge", document.edge_map())
             self.assertEqual(compile_request(canvas, ready_request)["operations"], [])
+
+    def test_estimate_text_height_counts_cjk_and_tables(self) -> None:
+        korean = "가나다라마바사아자차카타파하" * 3
+        latin = "abcdefghijklmn" * 3
+        self.assertGreater(
+            estimate_text_height(korean, 560, "paragraph"),
+            estimate_text_height(latin, 560, "paragraph"),
+            "CJK glyphs are double width and must wrap sooner",
+        )
+
+        one_row = "| a | b |\n|---|---|\n| 1 | 2 |"
+        two_rows = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
+        self.assertEqual(
+            estimate_text_height(two_rows, 560, "paragraph") - estimate_text_height(one_row, 560, "paragraph"),
+            40,
+            "one more table row adds a row's height, rounded to the 10px grid",
+        )
+
+        without_rule = "| a | b |\n| 1 | 2 |"
+        self.assertEqual(
+            estimate_text_height(one_row, 560, "paragraph"),
+            estimate_text_height(without_rule, 560, "paragraph"),
+            "the |---| rule renders as a border and adds no height",
+        )
+
+        self.assertGreater(
+            estimate_text_height("| 항목 | 값 |", 560, "paragraph"),
+            estimate_text_height("항목 값", 560, "paragraph"),
+            "table rows are padded taller than prose lines",
+        )
 
 
 if __name__ == "__main__":

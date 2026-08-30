@@ -23,6 +23,7 @@ Treat each native `paper_vN` group as one manuscript-version workspace. The repo
 - Preserve source order and distinguish section, subsection, paragraph, sentence, display equation, citation, table, figure, and Appendix content before laying out nodes.
 - Use one prose sentence per card in both the main text and Appendix. Fit card height to rendered text. Use 20px between sentences in one paragraph and 40px between paragraphs.
 - Use one ordinary-card width within a version, normally 812px. Headings follow the established indentation hierarchy; tables and figures are width exceptions.
+- Indent a subsection or paragraph heading relative to its parent, then keep every prose card owned by that heading on the same left edge as the heading. Content must never sit to the left of its owning structural heading.
 - Preserve inline LaTeX as `$...$`. Put every display equation in one card enclosed by `$$` and `$$`; never use fenced `math` code blocks.
 - Preserve manuscript wording during layout-only work. Splitting or moving cards does not authorize rewriting or summarizing them.
 
@@ -52,6 +53,7 @@ After importing or reconstructing a paper version, run `normalize_paper_colors` 
 
 ## Citations, equations, tables, and figures
 
+- Promote citations from the research-flow literature mapping: the cited item must already belong to the project Zotero Collection, exist in `references.bib`, and have a linked per-paper Canvas. Connect the citation card to the narrowest manuscript sentence supported by that literature; do not bulk-import every collected paper into the manuscript.
 - Replace an in-prose citation command with `{}` at the same position. Put the exact command in a grey side card and connect that card laterally to the sentence.
 - Keep display equations in their owning prose column. When prose names an equation, connect the equation card to that sentence.
 - Tables and figures never sit in the downward sentence stack. Put each artifact in an outside side lane at its first explicit mention and draw `artifact -> mentioning sentence`.

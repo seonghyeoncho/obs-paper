@@ -2,11 +2,13 @@
 
 Obs Paper is a Codex plugin for managing academic-paper workflows in an existing [Obsidian Canvas](https://obsidian.md/canvas).
 
-It provides six skills:
+It provides eight skills:
 
 - `project-library`: unified-vault project setup, migration, Zotero library access, PDF storage, and Canvas citation links
 - `paper`: sentence-level manuscript layout inside versioned paper groups
 - `research-flow`: RQ, experiment, evidence, and interpretation graphs
+- `node`: answer questions about specific cards addressed by their node IDs, fetched by direct lookup
+- `literature-flow`: RQ-targeted search, Zotero PDF ingestion, and citation mapping; PDF-to-flow conversion is suspended
 - `rebuttal`: reviewer comments organized from source text through final English response
 - `camera-ready-mapping`: non-destructive mapping from rebuttal promises to manuscript targets
 - `camera-ready`: final manuscript generation from a completed mapping, with yellow diff nodes and explicit blockers
@@ -60,14 +62,22 @@ python plugins/paper-canvas-workflow/scripts/zotero_bridge.py status
 python plugins/paper-canvas-workflow/scripts/zotero_bridge.py project-setup "/path/to/NLP/Projects/My Project"
 python plugins/paper-canvas-workflow/scripts/zotero_bridge.py search "paper title"
 python plugins/paper-canvas-workflow/scripts/zotero_bridge.py record-search "/path/to/NLP/Projects/My Project" search.json
+python plugins/paper-canvas-workflow/scripts/zotero_bridge.py attach ZOTERO_ITEM_KEY paper.pdf
 python plugins/paper-canvas-workflow/scripts/zotero_bridge.py audit "/path/to/NLP/Projects/My Project"
+python plugins/paper-canvas-workflow/scripts/obs_paper.py paper-flow-build "/path/to/NLP/Projects/My Project" paper-flow.json
 ```
 
-Each project uses an exact-name Zotero Collection as its literature source of truth. Selected papers are added to that Collection, PDFs are copied into `papers/`, only that Collection is exported to `references.bib`, and searches are appended to `searches.jsonl`. Export is blocked if it would remove a citation key already used by the project. The Zotero bridge uses the desktop Local API. Reads require no account API key; Zotero 10+ writes request approval in Zotero at runtime. Better BibTeX is optional and preferred for stable LaTeX citation keys. External scholarly search remains separate from Zotero library search.
+Each project uses an exact-name Zotero Collection as its literature source of truth. Selected papers and their stored PDF attachments live in Zotero, vault-wide sentence-level paper Canvases live under `Paper/`, only the project Collection is exported to `references.bib`, and searches are appended to `searches.jsonl`. No paper PDF is copied into Obsidian. Export is blocked if it would remove a citation key already used by the project. The Zotero bridge uses the desktop Local API. Reads require no account API key; Zotero 10+ writes request approval in Zotero at runtime. Better BibTeX is optional and preferred for stable LaTeX citation keys. External scholarly search remains separate from Zotero library search.
 
 ## Deterministic Canvas CLI
 
 The CLI compiles a human-readable JSON request into a SHA-bound Canvas patch, applies it atomically with a timestamped backup, and supports deterministic reruns.
+
+`nodes` reads cards by exact ID, returning each card's text, group, colour, geometry, and edges on both sides. Managed research-flow cards print their own ID as their last line, so a card can be addressed without searching the Canvas.
+
+```bash
+python plugins/paper-canvas-workflow/scripts/obs_paper.py nodes "/path/to/Project.canvas" rfparams00000001 rfanswer1rq10001
+```
 
 | Workflow | Actions |
 |---|---|
