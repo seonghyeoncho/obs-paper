@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,7 @@ ARTIFACT = re.compile(r"^\*\*(Table|Figure)\s+(\d+)\*\*\s*[:.]?\s*(.*)$", re.S)
 CITATION = re.compile(r"~?\\cite[tp]?(?:\[[^\]]*\])?\{[^}]+\}")
 # The placeholder is matched after escaping, where `{}` has become `\{\}`.
 PLACEHOLDER = r"\{\}"
+SECTION_REF = re.compile(r"(\d+(?:\.\d+)*)절")
 
 
 class TexError(RuntimeError):
@@ -155,6 +157,66 @@ def markdown_table(body: str) -> tuple[str, bool]:
     return "\n".join(lines), widest > COLUMN_CHARS
 
 
+def number_headings(nodes: list[dict[str, Any]]) -> dict[str, str]:
+    """Assign each heading the number LaTeX will print for it."""
+    counter = {"section": 0, "subsection": 0, "paragraph": 0}
+    numbers: dict[str, str] = {}
+    seen_first = False
+    for node in nodes:
+        text = strip_id(node.get("text", ""))
+        if not text.startswith("# "):
+            continue
+        level = HEADING_LEVEL.get(node.get("color", ""))
+        if level is None:
+            continue
+        title = text.splitlines()[0][2:].strip()
+        if not seen_first and "초록" not in title:
+            seen_first = True  # the manuscript title
+            continue
+        seen_first = True
+        if "초록" in title:
+            continue
+        counter[level] += 1
+        if level == "section":
+            counter["subsection"] = counter["paragraph"] = 0
+        elif level == "subsection":
+            counter["paragraph"] = 0
+        numbers[node["id"]] = ".".join(
+            str(counter[k]) for k in ("section", "subsection", "paragraph")
+            if counter[k] or k == "section"
+        )
+    return numbers
+
+
+def apply_section_refs(
+    escaped: str, targets: list[str], drift: list[str] | None
+) -> str:
+    """Turn `5.1절` into a reference to the heading the sentence points at.
+
+    The arrow is what the sentence actually means; the number beside it is a
+    copy that goes stale the moment the outline moves. Resolving from the arrow
+    keeps the printed number right, and a number that no longer matches any
+    target is reported rather than silently renumbered.
+    """
+    remaining = set(targets)
+    def swap(match: re.Match[str]) -> str:
+        written = match.group(1)
+        if written in remaining:
+            remaining.discard(written)
+            return f"\\ref{{sec:{written}}}절"
+        if drift is not None:
+            drift.append(
+                f"sentence cites {written}절 but its arrows point at "
+                f"{sorted(targets) or 'nothing'}"
+            )
+        return match.group(0)
+    out = SECTION_REF.sub(swap, escaped)
+    for unused in sorted(remaining):
+        if drift is not None:
+            drift.append(f"an arrow points at section {unused} but no `{unused}절` names it")
+    return out
+
+
 def apply_citations(escaped: str, commands: list[str]) -> str:
     """Put each command at its placeholder, or after the sentence if none."""
     for command in commands:
@@ -171,7 +233,8 @@ def apply_citations(escaped: str, commands: list[str]) -> str:
 
 
 def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = None,
-           consumed: set[str] | None = None) -> str:
+           consumed: set[str] | None = None, refs: dict[str, list[str]] | None = None,
+           drift: list[str] | None = None) -> str:
     out: list[str] = []
     paragraph: list[str] = []
     pending_figure: tuple[str, bool] | None = None
@@ -189,6 +252,7 @@ def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = Non
 
     cited = cited or {}
     consumed = consumed or set()
+    refs = refs or {}
 
     for node in nodes:
         if node["id"] in consumed:
@@ -271,6 +335,8 @@ def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = Non
         if gap is None or gap >= PARAGRAPH_GAP:
             flush()
         sentence = escape(" ".join(text.split()))
+        if node["id"] in refs:
+            sentence = apply_section_refs(sentence, refs[node["id"]], drift)
         if node["id"] in cited:
             sentence = apply_citations(sentence, cited[node["id"]])
         paragraph.append(sentence)
@@ -282,10 +348,16 @@ def render(nodes: list[dict[str, Any]], cited: dict[str, list[str]] | None = Non
     return "\n".join(out).rstrip() + "\n"
 
 
-def build(canvas: Path, label: str = "paper_v1") -> str:
+def build(canvas: Path, label: str = "paper_v1", drift: list[str] | None = None) -> str:
     nodes, edges = load_group(canvas, label)
+    ordered = reading_order(nodes)
     cited, consumed = collect_citations(nodes, edges)
-    return render(reading_order(nodes), cited, consumed)
+    numbers = number_headings(ordered)
+    refs: dict[str, list[str]] = {}
+    for edge in edges:
+        if edge["toNode"] in numbers and edge["fromNode"] not in numbers:
+            refs.setdefault(edge["fromNode"], []).append(numbers[edge["toNode"]])
+    return render(ordered, cited, consumed, refs, drift)
 
 
 def main() -> None:
@@ -296,10 +368,13 @@ def main() -> None:
     parser.add_argument("--group", default="paper_v1")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
+    drift: list[str] = []
     try:
-        body = build(args.canvas, args.group)
+        body = build(args.canvas, args.group, drift)
     except (TexError, OSError, json.JSONDecodeError) as exc:
         raise SystemExit(f"error: {exc}")
+    for line in drift:
+        print(f"warning: {line}", file=sys.stderr)
     if args.out:
         args.out.write_text(body, encoding="utf-8")
         print(f"{args.out} ({len(body)} bytes)")

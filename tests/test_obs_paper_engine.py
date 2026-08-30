@@ -1035,6 +1035,33 @@ class ObsPaperEngineTest(unittest.TestCase):
         self.assertIn(r"이 벤치마크~\cite{tau2}를 쓴다.", body, "a {} placeholder takes the citation in place")
         self.assertNotIn("\\textbackslash", body, "citation commands are LaTeX, not text to escape")
 
+    def test_paper_tex_resolves_a_section_reference_from_its_arrow(self) -> None:
+        from paper_tex import build
+
+        nodes = [
+            {"id": "g", "type": "group", "x": 0, "y": 0, "width": 9000, "height": 9000, "label": "paper_v1"},
+            {"id": "t", "type": "text", "x": 100, "y": 0, "width": 812, "height": 51, "text": "# 제목", "color": "6"},
+            {"id": "s1", "type": "text", "x": 100, "y": 90, "width": 812, "height": 51, "text": "# 서론", "color": "6"},
+            {"id": "p1", "type": "text", "x": 100, "y": 180, "width": 812, "height": 51,
+             "text": "이 성질은 2절에서 확인된다."},
+            {"id": "p2", "type": "text", "x": 100, "y": 290, "width": 812, "height": 51,
+             "text": "저 성질은 9절에서 확인된다."},
+            {"id": "s2", "type": "text", "x": 1100, "y": 0, "width": 812, "height": 51, "text": "# 실험", "color": "6"},
+        ]
+        edges = [
+            {"id": "r1", "fromNode": "p1", "fromSide": "right", "toNode": "s2", "toSide": "left"},
+            {"id": "r2", "fromNode": "p2", "fromSide": "right", "toNode": "s2", "toSide": "left"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = Path(directory) / "c.canvas"
+            canvas.write_text(json.dumps({"nodes": nodes, "edges": edges}), encoding="utf-8")
+            drift: list[str] = []
+            body = build(canvas, "paper_v1", drift)
+
+        self.assertIn(r"\ref{sec:2}절", body, "the arrow says which section, so the number is generated")
+        self.assertIn("9절", body, "a number matching no arrow is left alone rather than renumbered")
+        self.assertTrue(any("9절" in line for line in drift), "and the mismatch is reported")
+
     def test_paper_tex_rejects_a_heading_with_no_level_colour(self) -> None:
         from paper_tex import TexError, build
 
