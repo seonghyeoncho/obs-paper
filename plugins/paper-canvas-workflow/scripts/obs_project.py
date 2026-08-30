@@ -41,6 +41,8 @@ def _metadata(name: str, repository: Path | None) -> str:
         'bibliography: "references.bib"\n'
         'search_log: "searches.jsonl"\n'
         'zotero_collection: ""\n'
+        'overleaf_project: ""\n'
+        'overleaf_template: ""\n'
         "---\n\n"
         f"# {name}\n"
     )
