@@ -1004,6 +1004,37 @@ class ObsPaperEngineTest(unittest.TestCase):
         self.assertEqual(document.node("para")["color"], "4", "a paragraph heading must keep its depth")
         self.assertEqual(document.node("stray")["color"], "6", "a heading with no depth becomes a section")
 
+    def test_paper_tex_folds_citation_cards_into_their_sentences(self) -> None:
+        from paper_tex import build
+
+        with tempfile.TemporaryDirectory() as directory:
+            nodes = [
+                {"id": "g", "type": "group", "x": 0, "y": 0, "width": 9000, "height": 9000, "label": "paper_v1"},
+                {"id": "title", "type": "text", "x": 100, "y": 0, "width": 812, "height": 51,
+                 "text": "# 제목", "color": "6"},
+                {"id": "sec", "type": "text", "x": 100, "y": 90, "width": 812, "height": 51,
+                 "text": "# 서론", "color": "6"},
+                {"id": "s1", "type": "text", "x": 100, "y": 180, "width": 812, "height": 51,
+                 "text": "트랜잭션 계열은 실행한 뒤에야 되돌린다."},
+                {"id": "s2", "type": "text", "x": 100, "y": 291, "width": 812, "height": 51,
+                 "text": "이 벤치마크{}를 쓴다."},
+                {"id": "c1", "type": "text", "x": 1100, "y": 180, "width": 400, "height": 51,
+                 "text": "~\\cite{chang_sagallm_2025}"},
+                {"id": "c2", "type": "text", "x": 1100, "y": 291, "width": 400, "height": 51,
+                 "text": "~\\cite{tau2}"},
+            ]
+            edges = [
+                {"id": "e1", "fromNode": "c1", "fromSide": "left", "toNode": "s1", "toSide": "right"},
+                {"id": "e2", "fromNode": "c2", "fromSide": "left", "toNode": "s2", "toSide": "right"},
+            ]
+            canvas = Path(directory) / "c.canvas"
+            canvas.write_text(json.dumps({"nodes": nodes, "edges": edges}), encoding="utf-8")
+            body = build(canvas, "paper_v1")
+
+        self.assertIn(r"되돌린다~\cite{chang_sagallm_2025}.", body, "a citation goes before the full stop")
+        self.assertIn(r"이 벤치마크~\cite{tau2}를 쓴다.", body, "a {} placeholder takes the citation in place")
+        self.assertNotIn("\\textbackslash", body, "citation commands are LaTeX, not text to escape")
+
     def test_paper_tex_rejects_a_heading_with_no_level_colour(self) -> None:
         from paper_tex import TexError, build
 
