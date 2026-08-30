@@ -53,8 +53,11 @@ Allowed mapping statuses are `wording`, `ready`, `pending`, `author input`, and 
 `add_research_flow` requires keyed `nodes` and explicit two-key `links`.
 
 - Ordinary node: `key`, `kind`, `text`, `x`, `y`; optional geometry.
+- `kind` is one of `rq`, `experiment`, `answer`, `bridge`, `thought` (coloured, in the flow) or `source`, `table`, `figure`, `implementation`, `params` (uncoloured side cards). Flow kinds get an H1 prefix when the text has no heading; side cards, bridges, and thoughts keep their text verbatim.
+- `implementation`: one per experiment, a two-column table of run grid, paths, commands, commits, and outputs, optionally followed by a `**추가 메모**` paragraph. `params`: one per project, the thresholds and model names that hold across experiments. See `skills/research-flow/references/content-structure.md`.
 - Figure: also supply `file`, `width`, and `height`.
-- Experiment: optionally supply ordered `sections`, each with `key`, `heading`, `text`, and optional `height`.
+- Experiment: optionally supply ordered `sections`, each with `key`, `heading`, `text`, and optional `height`. `heading` must be exactly `Setup`, `Results`, `Control`, or `Sanity/Control`. Status, configuration, and scoring parameters belong in the experiment title or an implementation card, never in a section heading.
+- Link direction: a side card originates its link and points into the flow, because the card being referred to aims at the card that refers to it. Write `["impl", "setup"]`, not `["setup", "impl"]`; the reverse is rejected. Side-card links get geometric sides, flow links run bottom to top. The red `thought` card is the only reverse case: it originates a right-to-left link at whatever it questions.
 - `link_literature`: `key`, exact research `target_id`, verified `title`, `citekey`, and Zotero `item_key`; optional existing vault-relative `paper_flow`, `relevance`, `lane`, and explicit geometry. It creates one uncoloured source card and a source-to-question edge. Create separate target-specific cards when one paper supports multiple questions.
 - `remove_items`: explicit `node_ids` and `edge_ids`. Include every edge incident to a removed node.
 

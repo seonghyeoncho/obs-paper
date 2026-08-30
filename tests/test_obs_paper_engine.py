@@ -882,6 +882,55 @@ class ObsPaperEngineTest(unittest.TestCase):
             self.assertNotIn("stale-edge", document.edge_map())
             self.assertEqual(compile_request(canvas, ready_request)["operations"], [])
 
+    def research_flow_request(self, nodes: list[dict], links: list[list[str]]) -> dict:
+        return {
+            "schema_version": 1,
+            "workflow": "research-flow",
+            "target": {"group_label": "Research Flow"},
+            "actions": [{"op": "add_research_flow", "nodes": nodes, "links": links}],
+        }
+
+    def test_side_cards_are_uncoloured_and_point_into_the_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = fixture_canvas()
+            data["nodes"][0]["label"] = "Research Flow"
+            canvas = self.write_canvas(Path(directory), data)
+            nodes = [
+                {"key": "impl", "kind": "implementation", "text": "### Impl\n\n| a | b |", "x": 100, "y": 600},
+                {"key": "exp", "kind": "experiment", "text": "RQ1-E", "x": 1000, "y": 600},
+            ]
+            apply_patch(canvas, compile_request(canvas, self.research_flow_request(nodes, [["impl", "exp"]])))
+            document = CanvasDocument.load(canvas)
+            impl = document.node(deterministic_id("paper", "research_flow", "impl"))
+            self.assertNotIn("color", impl, "side cards stay uncoloured")
+            self.assertTrue(impl["text"].startswith("### Impl"), "side card text is kept verbatim")
+            edge = next(edge for edge in document.edges if edge["fromNode"] == impl["id"])
+            self.assertEqual((edge["fromSide"], edge["toSide"]), ("right", "left"))
+
+    def test_side_card_may_not_receive_a_link_from_the_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = fixture_canvas()
+            data["nodes"][0]["label"] = "Research Flow"
+            canvas = self.write_canvas(Path(directory), data)
+            nodes = [
+                {"key": "tbl", "kind": "table", "text": "### Table", "x": 1000, "y": 600},
+                {"key": "exp", "kind": "experiment", "text": "RQ1-E", "x": 100, "y": 600},
+            ]
+            with self.assertRaises(PlanError):
+                compile_request(canvas, self.research_flow_request(nodes, [["exp", "tbl"]]))
+
+    def test_experiment_section_heading_rejects_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = fixture_canvas()
+            data["nodes"][0]["label"] = "Research Flow"
+            canvas = self.write_canvas(Path(directory), data)
+            nodes = [{
+                "key": "exp", "kind": "experiment", "text": "RQ1-E", "x": 100, "y": 600,
+                "sections": [{"key": "r", "heading": "Results (depth 3)", "text": "b=7."}],
+            }]
+            with self.assertRaises(PlanError):
+                compile_request(canvas, self.research_flow_request(nodes, []))
+
     def test_estimate_text_height_counts_cjk_and_tables(self) -> None:
         korean = "가나다라마바사아자차카타파하" * 3
         latin = "abcdefghijklmn" * 3
