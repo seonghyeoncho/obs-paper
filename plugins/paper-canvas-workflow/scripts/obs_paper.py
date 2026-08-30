@@ -16,6 +16,7 @@ from obs_paper_engine import (
     inspect_canvas,
     validate_canvas,
 )
+from obs_project import ProjectError, import_project, init_project, resolve_project
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -62,6 +63,23 @@ def main() -> None:
     validate_parser = subparsers.add_parser("validate")
     validate_parser.add_argument("canvas", type=Path)
 
+    init_parser = subparsers.add_parser("project-init")
+    init_parser.add_argument("vault", type=Path)
+    init_parser.add_argument("name")
+    init_parser.add_argument("--repository", type=Path)
+
+    import_parser = subparsers.add_parser("project-import")
+    import_parser.add_argument("vault", type=Path)
+    import_parser.add_argument("name")
+    import_parser.add_argument("source_canvas", type=Path)
+    import_parser.add_argument("--repository", type=Path)
+
+    resolve_parser = subparsers.add_parser("project-resolve")
+    resolve_parser.add_argument("vault", type=Path)
+    selector = resolve_parser.add_mutually_exclusive_group(required=True)
+    selector.add_argument("--name")
+    selector.add_argument("--repository", type=Path)
+
     args = parser.parse_args()
     try:
         if args.command == "inspect":
@@ -79,9 +97,15 @@ def main() -> None:
             if args.patch_output:
                 emit(patch, args.patch_output)
             emit(apply_patch(args.canvas, patch, args.log))
-        else:
+        elif args.command == "validate":
             emit(validate_canvas(args.canvas))
-    except (PlanError, PreconditionError, OSError, json.JSONDecodeError) as exc:
+        elif args.command == "project-init":
+            emit(init_project(args.vault, args.name, args.repository))
+        elif args.command == "project-import":
+            emit(import_project(args.vault, args.name, args.source_canvas, args.repository))
+        else:
+            emit(resolve_project(args.vault, name=args.name, repository=args.repository))
+    except (PlanError, PreconditionError, ProjectError, OSError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
 
 

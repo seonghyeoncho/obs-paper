@@ -15,6 +15,7 @@ from obs_paper_engine import (  # noqa: E402
     PlanError,
     PreconditionError,
     apply_patch,
+    compile_document,
     compile_request,
     deterministic_id,
     inspect_canvas,
@@ -73,6 +74,14 @@ class ObsPaperEngineTest(unittest.TestCase):
             self.assertEqual((group["x"], group["y"], group["width"], group["height"]), (980, 80, 840, 400))
             self.assertEqual(compile_request(canvas, request())["operations"], [])
 
+    def test_compile_document_needs_no_canvas_file(self) -> None:
+        patch = compile_document(
+            fixture_canvas(), request(), document_id="blocksuite-doc-1"
+        )
+        self.assertEqual(patch["document_id"], "blocksuite-doc-1")
+        self.assertEqual(len(patch["operations"]), 1)
+        self.assertNotIn("canvas", patch)
+
     def test_existing_group_is_renamed_without_replacing_its_id(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             canvas = self.write_canvas(Path(directory), fixture_canvas(existing_group=True))
@@ -111,7 +120,7 @@ class ObsPaperEngineTest(unittest.TestCase):
                         "anchor_id": "b1",
                         "blocks": [
                             {"key": "audit-method", "kind": "sentence", "text": "Audit method.", "height": 70},
-                            {"key": "audit-result", "kind": "sentence", "text": "Audit result.", "height": 70},
+                            {"key": "audit-result", "kind": "paragraph", "text": "Audit result.", "height": 70},
                         ],
                         "shift_node_ids": ["c", "c1"],
                         "fit_group_id": "appendix-group",
@@ -126,10 +135,10 @@ class ObsPaperEngineTest(unittest.TestCase):
                 [node for node in document.nodes if node.get("text") in {"Audit method.", "Audit result."}],
                 key=lambda node: node["y"],
             )
-            self.assertEqual([node["y"] for node in inserted], [280, 370])
-            self.assertEqual([document.node(node_id)["y"] for node_id in ("c", "c1")], [460, 550])
+            self.assertEqual([node["y"] for node in inserted], [280, 390])
+            self.assertEqual([document.node(node_id)["y"] for node_id in ("c", "c1")], [480, 570])
             group = document.node("appendix-group")
-            self.assertEqual((group["x"], group["y"], group["width"], group["height"]), (980, 80, 840, 560))
+            self.assertEqual((group["x"], group["y"], group["width"], group["height"]), (980, 80, 840, 580))
             self.assertEqual(compile_request(canvas, insert_request)["operations"], [])
 
     def test_insert_blocks_rejects_artifacts_in_prose_stack(self) -> None:
@@ -149,6 +158,84 @@ class ObsPaperEngineTest(unittest.TestCase):
             }
             with self.assertRaisesRegex(PlanError, "does not place artifact"):
                 compile_request(canvas, insert_request)
+
+    def test_paper_colors_are_derived_and_normalized(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = fixture_canvas()
+            data["nodes"][1]["color"] = "1"
+            data["nodes"][2]["color"] = "3"
+            data["nodes"][-1]["color"] = "2"
+            canvas = self.write_canvas(Path(directory), data)
+            normalize_request = {
+                "schema_version": 1,
+                "workflow": "paper",
+                "target": {"group_label": "paper_v1"},
+                "actions": [
+                    {
+                        "op": "normalize_paper_colors",
+                        "node_ids": ["b", "b1", "main"],
+                        "contribution_ids": ["b1"],
+                    }
+                ],
+            }
+            apply_patch(canvas, compile_request(canvas, normalize_request))
+            document = CanvasDocument.load(canvas)
+            self.assertEqual(document.node("b").get("color"), "6")
+            self.assertEqual(document.node("b1").get("color"), "4")
+            self.assertNotIn("color", document.node("main"))
+            self.assertEqual(compile_request(canvas, normalize_request)["operations"], [])
+
+            insert_request = {
+                "schema_version": 1,
+                "workflow": "paper",
+                "target": {"group_label": "paper_v1"},
+                "actions": [
+                    {
+                        "op": "insert_blocks",
+                        "anchor_id": "main",
+                        "blocks": [
+                            {"key": "methods", "kind": "heading", "text": "# Methods", "height": 70},
+                            {"key": "contribution", "kind": "sentence", "role": "contribution", "text": "Contribution.", "height": 70},
+                        ],
+                    }
+                ],
+            }
+            patch = compile_request(canvas, insert_request)
+            inserted = [operation["after"] for operation in patch["operations"] if operation["op"] == "upsert_node"]
+            self.assertEqual([node.get("color") for node in inserted], ["6", "4"])
+
+    def test_compact_sections_uses_complete_title_rectangles(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = {
+                "nodes": [
+                    {"id": "paper", "type": "group", "x": 0, "y": 0, "width": 4000, "height": 1000, "label": "paper_v1"},
+                    {"id": "s1", "type": "text", "x": 100, "y": 100, "width": 800, "height": 70, "color": "6", "text": "# First"},
+                    {"id": "s1-body", "type": "text", "x": 100, "y": 190, "width": 800, "height": 70, "text": "First body."},
+                    {"id": "s2", "type": "text", "x": 2200, "y": 100, "width": 1200, "height": 70, "color": "6", "text": "# Second"},
+                    {"id": "s2-body", "type": "text", "x": 2400, "y": 190, "width": 800, "height": 70, "text": "Second body."},
+                ],
+                "edges": [],
+            }
+            canvas = self.write_canvas(Path(directory), data)
+            compact_request = {
+                "schema_version": 1,
+                "workflow": "paper",
+                "target": {"group_label": "paper_v1"},
+                "actions": [
+                    {
+                        "op": "compact_sections",
+                        "sections": [
+                            {"title_id": "s1", "node_ids": ["s1", "s1-body"]},
+                            {"title_id": "s2", "node_ids": ["s2", "s2-body"]},
+                        ],
+                    }
+                ],
+            }
+            apply_patch(canvas, compile_request(canvas, compact_request))
+            document = CanvasDocument.load(canvas)
+            self.assertEqual(document.node("s2")["x"], 1020)
+            self.assertEqual(document.node("s2-body")["x"], 1220)
+            self.assertEqual(compile_request(canvas, compact_request)["operations"], [])
 
     def test_insert_blocks_rejects_missing_downstream_shift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

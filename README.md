@@ -2,8 +2,9 @@
 
 Obs Paper is a Codex plugin for managing academic-paper workflows in an existing [Obsidian Canvas](https://obsidian.md/canvas).
 
-It provides five skills:
+It provides six skills:
 
+- `project-library`: unified-vault project setup, migration, Zotero library access, PDF storage, and Canvas citation links
 - `paper`: sentence-level manuscript layout inside versioned paper groups
 - `research-flow`: RQ, experiment, evidence, and interpretation graphs
 - `rebuttal`: reviewer comments organized from source text through final English response
@@ -48,7 +49,21 @@ Restart Claude Code after updating.
 
 ## What it edits
 
-The plugin works with existing `.canvas` files and records material operations in an adjacent `CANVAS_ACTION_LOG.md`. It is installed in Codex, not in Obsidian's Community Plugins directory.
+The plugin can initialize or import `<Vault>/Projects/<Project>/`, works with its `.canvas` file, and records material operations in the adjacent `CANVAS_ACTION_LOG.md`. It is installed in Codex, not in Obsidian's Community Plugins directory.
+
+## Unified vault and Zotero
+
+```bash
+python plugins/paper-canvas-workflow/scripts/obs_paper.py project-init /path/to/NLP "My Project" --repository /path/to/repo
+python plugins/paper-canvas-workflow/scripts/obs_paper.py project-import /path/to/NLP "My Project" source.canvas --repository /path/to/repo
+python plugins/paper-canvas-workflow/scripts/zotero_bridge.py status
+python plugins/paper-canvas-workflow/scripts/zotero_bridge.py project-setup "/path/to/NLP/Projects/My Project"
+python plugins/paper-canvas-workflow/scripts/zotero_bridge.py search "paper title"
+python plugins/paper-canvas-workflow/scripts/zotero_bridge.py record-search "/path/to/NLP/Projects/My Project" search.json
+python plugins/paper-canvas-workflow/scripts/zotero_bridge.py audit "/path/to/NLP/Projects/My Project"
+```
+
+Each project uses an exact-name Zotero Collection as its literature source of truth. Selected papers are added to that Collection, PDFs are copied into `papers/`, only that Collection is exported to `references.bib`, and searches are appended to `searches.jsonl`. Export is blocked if it would remove a citation key already used by the project. The Zotero bridge uses the desktop Local API. Reads require no account API key; Zotero 10+ writes request approval in Zotero at runtime. Better BibTeX is optional and preferred for stable LaTeX citation keys. External scholarly search remains separate from Zotero library search.
 
 ## Deterministic Canvas CLI
 
@@ -56,7 +71,7 @@ The CLI compiles a human-readable JSON request into a SHA-bound Canvas patch, ap
 
 | Workflow | Actions |
 |---|---|
-| `paper` | `group_appendix`, `insert_blocks`, `place_artifact`, `pair_appendix_columns`, `split_citation`, `connect_reference`, `fit_section_title`, `move_nodes`, `shift_sibling_group`, `normalize_equations` |
+| `paper` | `group_appendix`, `insert_blocks`, `place_artifact`, `pair_appendix_columns`, `split_citation`, `connect_reference`, `fit_section_title`, `move_nodes`, `shift_sibling_group`, `normalize_equations`, `normalize_paper_colors`, `compact_sections` |
 | `camera-ready-mapping` | `mapping_master`, `map_issue`, `remove_items` |
 | `camera-ready` | `build_camera_ready` |
 | `rebuttal` | `layout_rebuttal` |

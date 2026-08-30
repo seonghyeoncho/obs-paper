@@ -18,7 +18,7 @@ Treat the user's research notes and existing Obsidian Canvas as paired research 
 
 ## Start every research-flow task
 
-1. Discover candidates with `rg --files obs -g '*.canvas'`. If there is one matching paper folder, use it. If multiple candidates remain genuinely ambiguous, ask which paper is active.
+1. Resolve the active project from `<Vault>/Projects/*/project.md`, preferably by matching its `repository` field to the current repository. Use `obs_paper.py project-resolve` when the vault path is known. Fall back to a narrow `rg --files <project-folder> -g '*.canvas'` only for legacy projects; ask only when multiple candidates remain genuinely ambiguous.
 2. Read the repository instructions, current manuscript, Canvas JSON, and adjacent `CANVAS_ACTION_LOG.md` before editing.
 3. Validate that the Canvas parses and that node and edge IDs are unique and all edge endpoints exist.
 4. Infer the Canvas's actual relationship grammar from node positions, colors, text, images, and explicit edges. Spatial adjacency may carry more meaning than arrows; never add edges mechanically.

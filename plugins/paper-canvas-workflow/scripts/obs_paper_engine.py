@@ -112,7 +112,7 @@ class CanvasDocument:
         node_ids = {node["id"] for node in self.nodes}
         for node in self.nodes:
             for key in ("x", "y", "width", "height"):
-                if not isinstance(node.get(key), int):
+                if not isinstance(node.get(key), (int, float)):
                     raise PlanError(f"node {node['id']} has invalid {key}")
             if node["width"] <= 0 or node["height"] <= 0:
                 raise PlanError(f"node {node['id']} has a non-positive size")
@@ -123,6 +123,11 @@ class CanvasDocument:
 
 def canvas_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def document_revision(data: dict[str, Any]) -> str:
+    rendered = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 
 
 def deterministic_id(*parts: str) -> str:
@@ -246,6 +251,8 @@ def _compile_group_appendix(
     action: dict[str, Any],
     target_group: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    if "color" in action:
+        raise PlanError("paper Appendix groups use the default color")
     label = action.get("label")
     member_ids = action.get("member_ids")
     padding = action.get("padding", 20)
@@ -281,9 +288,6 @@ def _compile_group_appendix(
             "label": label,
         }
     )
-    if "color" in action:
-        after["color"] = action["color"]
-
     if not target_rect.contains(after):
         raise PlanError("computed Appendix group does not fit inside the target group")
     captured = {node["id"] for node in document.contained_non_groups(rect)}
@@ -353,7 +357,7 @@ def _compile_insert_blocks(
     predecessor_id = anchor["id"]
     inserted_ids: list[str] = []
     default_gap = action.get("gap", 20)
-    gap_after = action.get("gap_after", 20)
+    gap_after = action.get("gap_after", default_gap)
     if not isinstance(default_gap, int) or default_gap < 0 or not isinstance(gap_after, int) or gap_after < 0:
         raise PlanError("insert_blocks gaps must be non-negative integers")
 
@@ -364,9 +368,16 @@ def _compile_insert_blocks(
         text = block.get("text")
         if not isinstance(text, str) or not text.strip():
             raise PlanError("every inserted block needs non-empty text")
+        role = block.get("role", "ordinary")
+        if role not in {"ordinary", "contribution"}:
+            raise PlanError("paper block role must be ordinary or contribution")
+        if "color" in block:
+            raise PlanError("paper block colors are derived from kind and role")
+        if kind == "heading" and not text.startswith("# "):
+            raise PlanError("paper heading blocks must use '# ' H1 syntax")
         width = block.get("width", anchor["width"])
         x_offset = block.get("x_offset", 0)
-        gap_before = block.get("gap_before", default_gap)
+        gap_before = block.get("gap_before", default_gap * 2 if kind == "paragraph" else default_gap)
         if any(not isinstance(value, int) for value in (width, x_offset, gap_before)):
             raise PlanError("block width, x_offset, and gap_before must be integers")
         if width <= 0 or gap_before < 0:
@@ -390,8 +401,11 @@ def _compile_insert_blocks(
                 "text": text,
             }
         )
-        if "color" in block:
-            after["color"] = block["color"]
+        expected_color = "4" if role == "contribution" else "6" if kind == "heading" else None
+        if expected_color:
+            after["color"] = expected_color
+        else:
+            after.pop("color", None)
         operation = {
             "op": "upsert_node",
             "node_id": node_id,
@@ -464,6 +478,8 @@ def _compile_place_artifact(
     action: dict[str, Any],
     target_group: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    if "color" in action:
+        raise PlanError("paper tables and figures use the default color")
     kind = action.get("kind")
     if kind not in {"figure", "table"}:
         raise PlanError("place_artifact kind must be figure or table")
@@ -503,8 +519,6 @@ def _compile_place_artifact(
         "width": width,
         "height": height,
     })
-    if "color" in action:
-        after["color"] = action["color"]
     if not target_rect.contains(after):
         raise PlanError("artifact does not fit inside the target group")
     scratch = CanvasDocument(copy.deepcopy(document.data))
@@ -526,6 +540,93 @@ def _compile_place_artifact(
     for other in scratch.nodes:
         if other.get("type") != "group" and other["id"] != node_id and rects_overlap(node_rect(after), node_rect(other)):
             raise PlanError(f"artifact would overlap node: {other['id']}")
+    return operations
+
+
+def _compile_normalize_paper_colors(
+    document: CanvasDocument,
+    action: dict[str, Any],
+    target_group: dict[str, Any],
+) -> list[dict[str, Any]]:
+    node_ids = action.get("node_ids")
+    contribution_ids = action.get("contribution_ids", [])
+    if not isinstance(node_ids, list) or not node_ids or len(node_ids) != len(set(node_ids)):
+        raise PlanError("normalize_paper_colors needs unique manuscript node_ids")
+    if not isinstance(contribution_ids, list) or len(contribution_ids) != len(set(contribution_ids)):
+        raise PlanError("contribution_ids must be a unique list")
+    if not set(contribution_ids) <= set(node_ids):
+        raise PlanError("contribution_ids must be included in node_ids")
+
+    target_rect = node_rect(target_group)
+    scratch = CanvasDocument(copy.deepcopy(document.data))
+    operations: list[dict[str, Any]] = []
+    for node_id in node_ids:
+        node = scratch.node(node_id)
+        if node.get("type") == "group" or not target_rect.contains(node):
+            raise PlanError("paper color nodes must be non-groups inside the target")
+        after = copy.deepcopy(node)
+        if node_id in contribution_ids:
+            if node.get("type") != "text":
+                raise PlanError("contribution nodes must be text cards")
+            after["color"] = "4"
+        elif node.get("type") == "text" and node.get("text", "").startswith("# "):
+            after["color"] = "6"
+        else:
+            after.pop("color", None)
+        _append_operation(
+            scratch,
+            operations,
+            _node_operation(scratch, after, target_group_id=target_group["id"]),
+        )
+    return operations
+
+
+def _compile_compact_sections(
+    document: CanvasDocument,
+    action: dict[str, Any],
+    target_group: dict[str, Any],
+) -> list[dict[str, Any]]:
+    sections = action.get("sections")
+    gap = action.get("gap", 120)
+    if not isinstance(sections, list) or len(sections) < 2:
+        raise PlanError("compact_sections needs at least two ordered sections")
+    if not isinstance(gap, int) or gap < 0:
+        raise PlanError("compact_sections gap must be a non-negative integer")
+    target_rect = node_rect(target_group)
+    scratch = CanvasDocument(copy.deepcopy(document.data))
+    operations: list[dict[str, Any]] = []
+    managed_ids: list[str] = []
+    previous_right: int | None = None
+    for section in sections:
+        title_id = section.get("title_id") if isinstance(section, dict) else None
+        node_ids = section.get("node_ids") if isinstance(section, dict) else None
+        if not isinstance(title_id, str) or not isinstance(node_ids, list) or title_id not in node_ids:
+            raise PlanError("each compact section needs title_id included in node_ids")
+        if not node_ids or len(node_ids) != len(set(node_ids)):
+            raise PlanError("compact section node_ids must be non-empty and unique")
+        managed_ids.extend(node_ids)
+        title = scratch.node(title_id)
+        if title.get("type") != "text" or not title.get("text", "").startswith("# "):
+            raise PlanError("compact section title must be a structural heading")
+        members = [scratch.node(node_id) for node_id in node_ids]
+        if target_group["id"] in node_ids or any(not target_rect.contains(node) for node in members):
+            raise PlanError("compact section nodes must be inside the target")
+        if any(node["x"] < title["x"] or node["x"] + node["width"] > title["x"] + title["width"] for node in members):
+            raise PlanError("section title must span its complete section rectangle")
+        if previous_right is not None:
+            dx = previous_right + gap - title["x"]
+            if dx:
+                before = {node_id: {"x": scratch.node(node_id)["x"], "y": scratch.node(node_id)["y"]} for node_id in node_ids}
+                after = {node_id: {"x": position["x"] + dx, "y": position["y"]} for node_id, position in before.items()}
+                _append_operation(
+                    scratch,
+                    operations,
+                    {"op": "translate_nodes", "before": before, "after": after, "target_group_id": target_group["id"]},
+                )
+                title = scratch.node(title_id)
+        previous_right = title["x"] + title["width"]
+    if len(managed_ids) != len(set(managed_ids)):
+        raise PlanError("compact section node sets must not overlap")
     return operations
 
 
@@ -625,8 +726,11 @@ def _compile_split_citation(
         sentence_after = copy.deepcopy(sentence)
     else:
         raise PlanError("citation command is absent and no completed split exists")
+    card_text = action.get("card_text", command)
+    if not isinstance(card_text, str) or not card_text.strip():
+        raise PlanError("citation card_text must be non-empty")
     width = action.get("width", 300)
-    height = action.get("height", estimate_text_height(command, width, "paragraph"))
+    height = action.get("height", estimate_text_height(card_text, width, "paragraph"))
     gap = action.get("gap", 20)
     if any(not isinstance(value, int) for value in (width, height, gap)) or width <= 0 or height <= 0 or gap < 0:
         raise PlanError("citation geometry is invalid")
@@ -637,7 +741,7 @@ def _compile_split_citation(
         "y": sentence["y"] + (sentence["height"] - height) // 2,
         "width": width,
         "height": height,
-        "text": command,
+        "text": card_text,
     }
     if not target_rect.contains(card):
         raise PlanError("citation card does not fit inside the paper group")
@@ -1453,6 +1557,8 @@ REQUEST_COMPILERS: dict[
     "move_nodes": _compile_move_nodes,
     "shift_sibling_group": _compile_shift_sibling_group,
     "normalize_equations": _compile_normalize_equations,
+    "normalize_paper_colors": _compile_normalize_paper_colors,
+    "compact_sections": _compile_compact_sections,
     "map_issue": _compile_map_issue,
     "mapping_master": _compile_mapping_master,
     "remove_items": _compile_remove_items,
@@ -1473,6 +1579,8 @@ WORKFLOW_ACTIONS = {
         "move_nodes",
         "shift_sibling_group",
         "normalize_equations",
+        "normalize_paper_colors",
+        "compact_sections",
     },
     "camera-ready-mapping": {"map_issue", "mapping_master", "remove_items"},
     "camera-ready": {"build_camera_ready"},
@@ -1587,7 +1695,9 @@ def _validate_patch_result(document: CanvasDocument, operations: list[dict[str, 
                 raise PlanError(f"edge does not match patch: {operation['edge_id']}")
 
 
-def compile_request(canvas: Path, request: dict[str, Any]) -> dict[str, Any]:
+def compile_document(
+    data: dict[str, Any], request: dict[str, Any], *, document_id: str
+) -> dict[str, Any]:
     if request.get("schema_version") != 1:
         raise PlanError("unsupported request schema_version")
     workflow = request.get("workflow")
@@ -1597,7 +1707,7 @@ def compile_request(canvas: Path, request: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(actions, list):
         raise PlanError("request actions must be a list")
 
-    document = CanvasDocument.load(canvas)
+    document = CanvasDocument(copy.deepcopy(data))
     target_group = document.resolve_group(request.get("target", {}))
     operations: list[dict[str, Any]] = []
     for index, action in enumerate(actions):
@@ -1617,10 +1727,21 @@ def compile_request(canvas: Path, request: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "workflow": request["workflow"],
-        "canvas": str(canvas),
-        "expected_sha256": canvas_sha256(canvas),
+        "document_id": document_id,
+        "expected_revision": document_revision(data),
         "operations": operations,
     }
+
+
+def compile_request(canvas: Path, request: dict[str, Any]) -> dict[str, Any]:
+    patch = compile_document(
+        json.loads(canvas.read_text(encoding="utf-8")),
+        request,
+        document_id=str(canvas),
+    )
+    patch["canvas"] = str(canvas)
+    patch["expected_sha256"] = canvas_sha256(canvas)
+    return patch
 
 
 def _dump_canvas(data: dict[str, Any]) -> str:
@@ -1719,6 +1840,7 @@ def inspect_canvas(canvas: Path, target: dict[str, Any] | None = None) -> dict[s
                 **({"label": node["label"]} if "label" in node else {}),
                 **({"text": node["text"].splitlines()[0] if node["text"].splitlines() else ""} if "text" in node else {}),
                 **({"file": node["file"]} if "file" in node else {}),
+                **({"color": node["color"]} if "color" in node else {}),
             }
             for node in nodes
         ],

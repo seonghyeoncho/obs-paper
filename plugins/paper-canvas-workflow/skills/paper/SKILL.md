@@ -15,7 +15,7 @@ Treat each native `paper_vN` group as one manuscript-version workspace. The repo
 - `group_appendix` requires the owning `paper_vN` group, the complete explicit member-node list, the section label, and normally 20px padding. If the computed group would capture any unlisted node, stop and correct the request rather than widening the group.
 - `insert_blocks` requires an exact anchor node, individually keyed text blocks, and the complete explicit list of downstream nodes that must move. Use `fit_group_id` when inserting into a section-owned Appendix group so its 20px boundary is recomputed. Tables and figures are not prose blocks and must wait for an outside-artifact handler.
 - Use `place_artifact`, `split_citation`, and `connect_reference` for side artifacts and explicit references; use `fit_section_title` after the section rectangle changes.
-- Use `pair_appendix_columns` for section-owned Appendix lanes, `normalize_equations` for fenced-math conversion, `move_nodes` for an explicit managed set, and `shift_sibling_group` only for a required rigid-body collision shift.
+- Use `pair_appendix_columns` for section-owned Appendix lanes, `normalize_equations` for fenced-math conversion, `normalize_paper_colors` for the complete manuscript-owned node set, `compact_sections` for ordered top-level section rectangles, `move_nodes` for an explicit managed set, and `shift_sibling_group` only for a required rigid-body collision shift.
 - Every mutation request names exact node IDs. Do not infer a broad deletion or movement set from coordinates alone.
 
 ## Manuscript grammar
@@ -25,6 +25,20 @@ Treat each native `paper_vN` group as one manuscript-version workspace. The repo
 - Use one ordinary-card width within a version, normally 812px. Headings follow the established indentation hierarchy; tables and figures are width exceptions.
 - Preserve inline LaTeX as `$...$`. Put every display equation in one card enclosed by `$$` and `$$`; never use fenced `math` code blocks.
 - Preserve manuscript wording during layout-only work. Splitting or moving cards does not authorize rewriting or summarizing them.
+
+## Mandatory color grammar
+
+Match the established `paper_v1` Skill Following palette exactly:
+
+- Color `"6"` (purple): every structural manuscript heading card represented with `# `, including section, subsection, paragraph, and Appendix headings.
+- Color `"4"` (green): only the contribution lead and its contribution branch cards.
+- No `color` field: ordinary prose, display equations, citation/source cards, tables, figures, and embedded prompt or schema content such as `##` lines inside a content block.
+
+The paper workflow must not create red `"1"`, orange `"2"`, yellow `"3"`, or cyan `"5"` manuscript nodes. Those colors belong to author thoughts, camera-ready mapping, camera-ready changes, or other workflows. Preserve such user-authored or stage-specific annotations by excluding them from paper color normalization.
+
+For `insert_blocks`, use `kind: "heading"` with `# ` text for a structural heading; it becomes purple automatically. Use `role: "contribution"` for every contribution card; it becomes green automatically. Do not pass raw `color` values.
+
+After importing or reconstructing a paper version, run `normalize_paper_colors` once with the complete explicit list of manuscript-owned, non-group node IDs and the contribution subset. Exclude mapping annotations, reviewer cards, author notes, and camera-ready change nodes. A second identical normalization must produce zero operations.
 
 ## Section-paired Appendix layout
 
@@ -53,6 +67,7 @@ Treat each native `paper_vN` group as one manuscript-version workspace. The repo
 - Center deliberate contribution branches beneath their lead card.
 - Compute a section rectangle from its main column, Appendix column, citations, equations, tables, figures, and branches. Adjacent sections must be spaced from these complete rectangles.
 - Make the top-level section title span the full section rectangle so it visibly marks that section's area.
+- Keep exactly 120px of horizontal space between adjacent complete top-level section rectangles. Do not measure from prose columns or title text alone. Run `compact_sections` with ordered sections and complete explicit node sets after title fitting; a second identical run must produce zero operations.
 - Spatial order carries ordinary prose flow. Add arrows only for citations, explicit Figure/Table/Equation/Appendix references, or user-authored logical relations.
 
 ## Safe mutation and validation
@@ -65,12 +80,14 @@ Verify after editing:
 - one sentence per prose card and fitted heights;
 - 20/40px sentence and paragraph gaps;
 - every display equation uses `$$...$$`, including Appendix equations;
+- every managed structural `# ` heading is purple, every declared contribution card is green, and every other managed manuscript node has no color field;
 - no separate Appendix group remains in a newly built version;
 - every populated Appendix column has one correctly labeled section-scoped group inside `paper_vN`;
 - each Appendix section is in its owning section's right column and in source order;
 - every citation and explicit Appendix/Equation/Figure/Table mention has the required edge;
 - every Table/Figure is outside the prose stack, at its first mention, readable at its own width, and non-overlapping;
 - section titles span complete section rectangles and sibling sections do not overlap;
+- adjacent complete top-level section rectangles have exactly 120px horizontal gaps;
 - rerunning the deterministic transform makes no further changes.
 
 Append material layout, correction, validation, and blocker actions to the adjacent `CANVAS_ACTION_LOG.md` with `scripts/record_action.py`.

@@ -15,16 +15,18 @@ Use one JSON object:
 
 ## Paper actions
 
-- `group_appendix`: `label`, `member_ids`; optional `group_id`, `padding`, `color`.
-- `insert_blocks`: `anchor_id`, `blocks`; optional `shift_node_ids`, `fit_group_id`, `gap`, `gap_after`. Every block has `key`, `text`, and `kind` (`sentence`, `paragraph`, `heading`, `equation`); geometry and color are optional.
+- `group_appendix`: `label`, `member_ids`; optional `group_id`, `padding`. Paper groups always use the default color.
+- `insert_blocks`: `anchor_id`, `blocks`; optional `shift_node_ids`, `fit_group_id`, `gap`, `gap_after`. The default gap is 20; a `paragraph` starts after 40 unless its `gap_before` is explicit. Every block has `key`, `text`, and `kind` (`sentence`, `paragraph`, `heading`, `equation`); geometry and `role` (`ordinary` or `contribution`) are optional. Colors are derived: structural headings use `"6"`, contributions use `"4"`, and other blocks use no color.
 - `place_artifact`: `key`, `kind` (`figure` or `table`), `mention_ids`, `lane`, `width`, `height`; a figure has `file`, a table has complete Markdown `text`.
 - `pair_appendix_columns`: `sections`. Every section has `key`, `label`, `x`, `y`, and ordered `blocks` of explicit member-ID lists; optional `group_id`, `gap`, `padding`.
-- `split_citation`: `key`, `sentence_id`, exact `command`; optional `lane`, `width`, `height`, `gap`, `node_id`.
+- `split_citation`: `key`, `sentence_id`, exact `command`; optional `card_text`, `lane`, `width`, `height`, `gap`, `node_id`. Use `card_text` to retain the command plus a Zotero link in the grey side card.
 - `connect_reference`: `key`, `kind`, `source_id`, `target_ids`. Ports follow the dominant center-to-center axis automatically. Supply both `from_side` and `to_side` only for an intentional override; set `curved: true` when that override is not center-aligned.
 - `fit_section_title`: `title_id`, `member_ids` for the complete semantic section rectangle, excluding mapping annotations.
 - `move_nodes`: `anchor_id`, complete `node_ids`, destination `x`, `y`. The destination is absolute and rerunnable.
 - `shift_sibling_group`: sibling `group_id` and absolute `x`, `y`. The complete contained group moves rigidly.
 - `normalize_equations`: explicit `node_ids` whose text is fenced `math` or already `$$...$$`.
+- `normalize_paper_colors`: complete explicit manuscript-owned `node_ids`; optional `contribution_ids`, which must be a subset. It assigns `"4"` to contributions, `"6"` to remaining `# ` structural headings, and removes color from all other managed nodes. Exclude reviewer, mapping, author-note, and camera-ready annotation nodes.
+- `compact_sections`: ordered `sections`, each with a structural `title_id` and the complete explicit `node_ids` for that section, including nested Appendix groups and artifacts; optional `gap`, default 120. Every title must already span its complete section rectangle. The first section stays fixed and later sections translate rigidly to the exact gap.
 
 ## Camera-ready mapping actions
 

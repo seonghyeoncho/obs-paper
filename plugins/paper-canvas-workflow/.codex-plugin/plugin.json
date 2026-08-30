@@ -1,7 +1,7 @@
 {
   "name": "paper-canvas-workflow",
-  "version": "0.3.2+codex.20260828153717",
-  "description": "Structure academic papers, research flows, rebuttals, camera-ready plans, and final camera-ready manuscripts in Obsidian Canvas.",
+  "version": "0.4.0+codex.20260830093014",
+  "description": "Manage academic projects, Zotero-linked paper libraries, research flows, rebuttals, and camera-ready manuscripts in Obsidian Canvas.",
   "author": {
     "name": "seonghyeoncho",
     "url": "https://github.com/seonghyeoncho"
@@ -13,13 +13,14 @@
     "camera-ready",
     "obsidian-canvas",
     "paper",
-    "rebuttal"
+    "rebuttal",
+    "zotero"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Obs Paper",
     "shortDescription": "Manage academic paper workflows in Obsidian Canvas.",
-    "longDescription": "Build sentence-level manuscript layouts, research-flow graphs, reviewer rebuttal grids, camera-ready change maps, and final camera-ready manuscript groups while preserving the spatial grammar of an existing Obsidian Canvas.",
+    "longDescription": "Initialize unified-vault projects, connect Zotero papers and citations, and build manuscript layouts, research flows, rebuttal grids, and camera-ready groups while preserving Obsidian Canvas spatial grammar.",
     "developerName": "seonghyeoncho",
     "category": "Productivity",
     "capabilities": [
@@ -27,6 +28,7 @@
     ],
     "websiteURL": "https://github.com/seonghyeoncho/obs-paper",
     "defaultPrompt": [
+      "Create this paper project in my unified Obsidian vault and connect its Zotero library.",
       "Map this paper into a sentence-level Obsidian Canvas.",
       "Organize these reviewer comments into a rebuttal workflow.",
       "Map camera-ready changes onto paper_v2 without rewriting it.",
