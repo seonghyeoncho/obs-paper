@@ -377,3 +377,47 @@ class ProjectZoteroTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WebModeTest(unittest.TestCase):
+    def test_local_by_default(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            client = ZoteroClient()
+        self.assertFalse(client.web)
+        self.assertEqual(client.library, "users/0")
+        self.assertEqual(client.base_url, "http://127.0.0.1:23119/api")
+
+    def test_web_when_both_variables_are_set(self) -> None:
+        env = {"ZOTERO_USER_ID": "19289380", "ZOTERO_API_KEY": "secret"}
+        with patch.dict("os.environ", env, clear=True):
+            client = ZoteroClient()
+        self.assertTrue(client.web)
+        self.assertEqual(client.library, "users/19289380")
+        self.assertEqual(client.base_url, "https://api.zotero.org")
+
+    def test_a_key_without_a_user_id_stays_local(self) -> None:
+        with patch.dict("os.environ", {"ZOTERO_API_KEY": "secret"}, clear=True):
+            client = ZoteroClient()
+        self.assertFalse(client.web)
+
+    def test_web_mode_carries_the_key_and_needs_no_prompt(self) -> None:
+        client = ZoteroClient(user_id="19289380", api_key="secret")
+        self.assertEqual(client.authorize(), "secret")
+        self.assertEqual(client._write_headers(), {})
+        with patch("zotero_bridge.urlopen") as opened:
+            opened.return_value.__enter__.return_value.read.return_value = b"{}"
+            opened.return_value.__enter__.return_value.headers.items.return_value = []
+            client._request("keys/current")
+        request = opened.call_args[0][0]
+        self.assertEqual(request.full_url, "https://api.zotero.org/keys/current")
+        self.assertEqual(request.get_header("Zotero-api-key"), "secret")
+
+    def test_stored_pdfs_stay_on_the_desktop(self) -> None:
+        client = ZoteroClient(user_id="19289380", api_key="secret")
+        for call in (
+            lambda: client.attachment_path("ABCD1234"),
+            lambda: client.import_pdf("ABCD1234", Path("paper.pdf")),
+        ):
+            with self.assertRaises(ZoteroError) as raised:
+                call()
+            self.assertIn("Zotero Desktop", str(raised.exception))
