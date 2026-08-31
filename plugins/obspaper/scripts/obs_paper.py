@@ -17,7 +17,15 @@ from obs_paper_engine import (
     read_nodes,
     validate_canvas,
 )
-from obs_project import ProjectError, build_paper_flow, import_project, init_project, resolve_project
+from obs_project import (
+    ProjectError,
+    build_paper_flow,
+    import_project,
+    init_project,
+    resolve_project,
+    resolve_vault,
+    standardize_project,
+)
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -81,6 +89,15 @@ def main() -> None:
     selector.add_argument("--name")
     selector.add_argument("--repository", type=Path)
 
+    standardize_parser = subparsers.add_parser("project-standardize")
+    standardize_parser.add_argument("vault", type=Path)
+    standardize_parser.add_argument("name")
+    standardize_parser.add_argument("--repository", type=Path)
+
+    vault_parser = subparsers.add_parser("vault-path")
+    vault_parser.add_argument("name", nargs="?", default="NLP")
+    vault_parser.add_argument("--obsidian", default="obsidian")
+
     nodes_parser = subparsers.add_parser("nodes")
     nodes_parser.add_argument("canvas", type=Path)
     nodes_parser.add_argument("node_ids", nargs="+")
@@ -118,6 +135,10 @@ def main() -> None:
             emit(import_project(args.vault, args.name, args.source_canvas, args.repository))
         elif args.command == "project-resolve":
             emit(resolve_project(args.vault, name=args.name, repository=args.repository))
+        elif args.command == "project-standardize":
+            emit(standardize_project(args.vault, args.name, args.repository))
+        elif args.command == "vault-path":
+            emit({"vault": args.name, "path": str(resolve_vault(args.name, args.obsidian))})
         else:
             emit(build_paper_flow(args.project, args.spec, replace=args.replace))
     except (PlanError, PreconditionError, ProjectError, OSError, json.JSONDecodeError) as exc:

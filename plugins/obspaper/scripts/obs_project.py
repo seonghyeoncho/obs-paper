@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -29,13 +30,14 @@ def project_root(vault: Path, name: str) -> Path:
     return vault.resolve() / "Projects" / _project_name(name)
 
 
-def _metadata(name: str, repository: Path | None) -> str:
+def _metadata(name: str, repository: Path | None, canvas: str | None = None) -> str:
     repo = str(repository.resolve()) if repository else ""
+    canvas = canvas or f"{name}.canvas"
     return (
         "---\n"
         f"project: {json.dumps(name, ensure_ascii=False)}\n"
         f"repository: {json.dumps(repo, ensure_ascii=False)}\n"
-        f"canvas: {json.dumps(name + '.canvas', ensure_ascii=False)}\n"
+        f"canvas: {json.dumps(canvas, ensure_ascii=False)}\n"
         'paper_flows: "Paper"\n'
         'assets: "assets"\n'
         'bibliography: "references.bib"\n'
@@ -67,17 +69,28 @@ def init_project(vault: Path, name: str, repository: Path | None = None) -> dict
         paper_library.mkdir()
         created.append(str(paper_library))
 
-    canvas = root / f"{name}.canvas"
-    if not canvas.exists():
+    canonical = root / f"{name}.canvas"
+    existing = sorted(root.glob("*.canvas"))
+    if canonical.is_file():
+        canvas = canonical
+    elif len(existing) == 1:
+        canvas = existing[0]
+    elif existing:
+        raise ProjectError(f"project Canvas is ambiguous: {root}")
+    else:
+        canvas = canonical
         canvas.write_text('{\n\t"nodes":[],\n\t"edges":[]\n}\n', encoding="utf-8")
         created.append(str(canvas))
 
     metadata = root / "project.md"
     if not metadata.exists():
-        metadata.write_text(_metadata(name, repository), encoding="utf-8")
+        metadata.write_text(_metadata(name, repository, canvas.name), encoding="utf-8")
         created.append(str(metadata))
-    elif not _frontmatter_value(metadata, "paper_flows"):
-        set_frontmatter_value(metadata, "paper_flows", "Paper")
+    else:
+        if not _frontmatter_value(metadata, "canvas"):
+            set_frontmatter_value(metadata, "canvas", canvas.name)
+        if not _frontmatter_value(metadata, "paper_flows"):
+            set_frontmatter_value(metadata, "paper_flows", "Paper")
 
     for filename in ("references.bib", "searches.jsonl"):
         path = root / filename
@@ -104,6 +117,97 @@ def init_project(vault: Path, name: str, repository: Path | None = None) -> dict
         "root": str(root),
         "canvas": str(canvas),
         "created": created,
+    }
+
+
+def resolve_vault(name: str = "NLP", executable: str = "obsidian") -> Path:
+    """Resolve a desktop Obsidian vault by its registered name."""
+    try:
+        result = subprocess.run(
+            [executable, "vaults", "verbose"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ProjectError(f"cannot query Obsidian CLI: {exc}") from exc
+    matches = [Path(path) for vault_name, path in (line.split("\t", 1) for line in result.stdout.splitlines() if "\t" in line) if vault_name == name]
+    if len(matches) != 1 or not matches[0].is_dir():
+        raise ProjectError(f"vault must resolve once by name {name!r} ({len(matches)} matches)")
+    return matches[0].resolve()
+
+
+def standardize_project(vault: Path, name: str, repository: Path | None = None) -> dict[str, Any]:
+    """Add project support files and localize every Canvas file node into assets/."""
+    if not vault.is_dir():
+        raise ProjectError(f"vault does not exist: {vault}")
+    name = _project_name(name)
+    root = project_root(vault, name)
+    if not root.is_dir():
+        raise ProjectError(f"project does not exist: {root}")
+
+    canvases = sorted(root.glob("*.canvas"))
+    if not canvases:
+        raise ProjectError(f"project has no Canvas: {root}")
+    vault_root = vault.resolve()
+    assets = root / "assets"
+    documents: list[tuple[Path, dict[str, Any], list[tuple[dict[str, Any], Path, Path]]]] = []
+    for canvas in canvases:
+        data = json.loads(canvas.read_text(encoding="utf-8"))
+        if not isinstance(data.get("nodes"), list) or not isinstance(data.get("edges"), list):
+            raise ProjectError(f"Canvas needs nodes and edges arrays: {canvas}")
+        references: list[tuple[dict[str, Any], Path, Path]] = []
+        for node in data["nodes"]:
+            if node.get("type") != "file" or not isinstance(node.get("file"), str):
+                continue
+            raw = Path(node["file"])
+            candidates = [raw] if raw.is_absolute() else [vault_root / raw, canvas.parent / raw]
+            source = next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
+            if source is None:
+                raise ProjectError(f"missing Canvas file reference: {node['file']} in {canvas.name}")
+            destination = source if source.is_relative_to(root.resolve()) else assets / source.name
+            expected = destination.relative_to(vault_root).as_posix()
+            if node["file"] == expected:
+                continue
+            if destination.exists() and _sha256(destination) != _sha256(source):
+                raise ProjectError(f"asset name collision: {destination.name}")
+            references.append((node, source, destination))
+        documents.append((canvas, data, references))
+
+    result = init_project(vault, name, repository)
+    copied: list[str] = []
+    changed: list[str] = []
+    history = root / ".canvas-history"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    for canvas, data, references in documents:
+        if not references:
+            continue
+        assets.mkdir(exist_ok=True)
+        for node, source, destination in references:
+            if source != destination and not destination.exists():
+                shutil.copy2(source, destination)
+                copied.append(str(destination))
+            node["file"] = destination.relative_to(vault_root).as_posix()
+        history.mkdir(exist_ok=True)
+        shutil.copy2(canvas, history / f"{canvas.stem}.{stamp}.canvas")
+        canvas.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        changed.append(str(canvas))
+
+    if changed or result["created"]:
+        append_action(
+            root / "CANVAS_ACTION_LOG.md",
+            status="done",
+            action="standardize-project",
+            target=str(root),
+            reason="Unified Sync vault project structure",
+            result=f"Standardized {len(canvases)} Canvas files; localized {len(copied)} assets; changed {len(changed)} Canvas files",
+        )
+    return {
+        **result,
+        "status": "standardized" if changed or result["created"] else "exists",
+        "canvases": [str(path) for path in canvases],
+        "changed": changed,
+        "assets": copied,
     }
 
 

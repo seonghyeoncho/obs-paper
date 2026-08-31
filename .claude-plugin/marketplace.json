@@ -10,7 +10,7 @@
       "name": "obspaper",
       "source": "./plugins/obspaper",
       "description": "Manage unified-vault paper projects, Zotero-linked libraries and PDF flows, research flows, rebuttals, and camera-ready manuscripts in Obsidian Canvas.",
-      "version": "0.9.0"
+      "version": "0.10.0"
     }
   ]
 }

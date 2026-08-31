@@ -16,6 +16,14 @@ python ../../scripts/obs_paper.py project-import <vault> <project> <source.canva
 
 This requires an empty destination Canvas, copies referenced files into `assets/`, rewrites file nodes to vault-relative paths, and preserves the source. If the project is already under `<vault>/Projects/<project>/`, use idempotent `project-init` only to create missing support files; never import the Canvas onto itself.
 
+When an in-vault project still references files from the vault root or another project, standardize it instead:
+
+```bash
+python ../../scripts/obs_paper.py project-standardize <vault> <project> --repository <repo>
+```
+
+The command preflights every project Canvas before mutation, preserves a single legacy main-Canvas filename in `project.md`, copies external file-node targets into the project's `assets/` folder, rewrites the Canvas references, and creates `.canvas-history/` backups. After all projects are standardized, remove a vault-root asset only when no Canvas references it and an external archive copy has been verified.
+
 Before Zotero setup, preserve an existing project bibliography as `<project-folder>/references.bib`. Preserve existing `searches.jsonl` records by appending valid JSON lines; never overwrite them. Move per-literature Canvases to the shared `<Vault>/Paper/` library after checking filename collisions. Import every legacy project PDF into its Zotero parent item and verify the stored attachment before removing the Obsidian copy. Do not concatenate bibliographies blindly because duplicate citation keys can mask conflicts.
 
 ## Populate Zotero without intermediate exports

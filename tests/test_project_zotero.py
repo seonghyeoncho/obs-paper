@@ -10,7 +10,15 @@ from unittest.mock import MagicMock, patch
 SCRIPTS = Path(__file__).parents[1] / "plugins/obspaper/scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from obs_project import ProjectError, build_paper_flow, import_project, init_project, resolve_project  # noqa: E402
+from obs_project import (  # noqa: E402
+    ProjectError,
+    build_paper_flow,
+    import_project,
+    init_project,
+    resolve_project,
+    resolve_vault,
+    standardize_project,
+)
 from pdf_to_flow import _join_lines, _sentences, Line  # noqa: E402
 from obs_paper_engine import CanvasDocument  # noqa: E402
 from zotero_bridge import (  # noqa: E402
@@ -136,6 +144,50 @@ class ProjectZoteroTest(unittest.TestCase):
             data = json.loads(Path(imported["canvas"]).read_text(encoding="utf-8"))
             self.assertEqual(data["nodes"][0]["file"], "Projects/Imported/assets/figure.png")
             self.assertEqual((vault / data["nodes"][0]["file"]).read_bytes(), b"png")
+
+    def test_project_standardize_adopts_legacy_canvas_and_localizes_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            vault = root / "NLP"
+            project = vault / "Projects" / "Legacy"
+            project.mkdir(parents=True)
+            figure = vault / "figure.png"
+            figure.write_bytes(b"png")
+            assets = project / "assets"
+            assets.mkdir()
+            local_figure = assets / "local.png"
+            local_figure.write_bytes(b"local png")
+            canvas = project / "Old Name.canvas"
+            canvas.write_text(
+                json.dumps(
+                    {
+                        "nodes": [
+                            {"id": "f", "type": "file", "file": "figure.png"},
+                            {"id": "local", "type": "file", "file": "assets/local.png"},
+                        ],
+                        "edges": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = standardize_project(vault, "Legacy")
+            self.assertEqual(result["status"], "standardized")
+            self.assertEqual(resolve_project(vault, name="Legacy")["canvas"], str(canvas.resolve()))
+            data = json.loads(canvas.read_text(encoding="utf-8"))
+            self.assertEqual(data["nodes"][0]["file"], "Projects/Legacy/assets/figure.png")
+            self.assertEqual(data["nodes"][1]["file"], "Projects/Legacy/assets/local.png")
+            self.assertEqual((project / "assets" / "figure.png").read_bytes(), b"png")
+            self.assertEqual(len(list((project / ".canvas-history").glob("*.canvas"))), 1)
+
+    def test_resolve_vault_uses_registered_exact_name(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            vault = Path(directory) / "NLP"
+            vault.mkdir()
+            completed = MagicMock(stdout=f"Other\t/tmp/other\nNLP\t{vault}\n")
+            with patch("obs_project.subprocess.run", return_value=completed) as run:
+                self.assertEqual(resolve_vault(), vault.resolve())
+            run.assert_called_once_with(["obsidian", "vaults", "verbose"], check=True, capture_output=True, text=True)
 
     def test_build_paper_flow_creates_linked_idempotent_canvas(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

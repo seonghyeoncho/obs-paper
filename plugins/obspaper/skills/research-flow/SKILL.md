@@ -10,6 +10,7 @@ Treat the user's research notes and existing Obsidian Canvas as paired research 
 ## Deterministic automation
 
 - Read `../../references/request-schema.md` before authoring a request.
+- Read `../../references/sync-topology.md` before mutating a Canvas in the active Obsidian Sync vault. Sync does not make concurrent Canvas editing safe.
 - Read `references/content-structure.md` before writing or revising node text: content reconstruction, node splitting, metadata separation, or Korean editing. Ordinary layout work does not need it.
 - Use `../../scripts/obs_paper.py` with workflow `research-flow` and actions `add_research_flow`, `link_literature`, or `remove_items` after inspecting the existing grammar.
 - Supply stable keyed nodes with exact geometry and explicit links. Use kinds `rq`, `experiment`, `answer`, `bridge`, `thought`, `source`, `table`, or `figure`.
@@ -23,7 +24,8 @@ Treat the user's research notes and existing Obsidian Canvas as paired research 
 2. Read the repository instructions, current manuscript, Canvas JSON, and adjacent `CANVAS_ACTION_LOG.md` before editing.
 3. Validate that the Canvas parses and that node and edge IDs are unique and all edge endpoints exist.
 4. Infer the Canvas's actual relationship grammar from node positions, colors, text, images, and explicit edges. Spatial adjacency may carry more meaning than arrows; never add edges mechanically.
-5. Append a `session-start` entry listing the artifacts inspected and the task objective.
+5. When the Canvas is in the active Sync vault, confirm the current host has received the latest revision and no other host is editing that Canvas.
+6. Append a `session-start` entry listing the artifacts inspected and the task objective.
 
 ## Preserve the existing flow
 
@@ -80,4 +82,4 @@ python /path/to/plugin/scripts/record_action.py \
 
 ## Finish the task
 
-Reparse the Canvas, rerun the ID/edge integrity checks, and verify every planned mutation has a matching `done`, `verified`, `skipped`, or `blocked` entry. Report the Canvas path, manuscript files changed, validation performed, and remaining blockers.
+Reparse the Canvas, rerun the ID/edge integrity checks, and verify every planned mutation has a matching `done`, `verified`, `skipped`, or `blocked` entry. For a Canvas in the active Sync vault, confirm the change has uploaded before transferring writer ownership to another host. Report the Canvas path, manuscript files changed, validation performed, and remaining blockers.

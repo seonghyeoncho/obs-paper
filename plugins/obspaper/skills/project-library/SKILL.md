@@ -5,6 +5,8 @@ description: Initialize or import an academic project in a unified Obsidian vaul
 
 # Project Library
 
+Active projects live in one Obsidian Sync vault. iCloud is a separate archive vault for inactive projects and never manages the active vault's files. Read [../../references/sync-topology.md](../../references/sync-topology.md) before creating, migrating, archiving, or connecting a project on another host.
+
 Use one Obsidian vault with project folders and one shared paper-flow library:
 
 ```text
@@ -20,7 +22,15 @@ Use one Obsidian vault with project folders and one shared paper-flow library:
     └── searches.jsonl
 ```
 
-The research repository remains separate. `project.md` records its absolute path so the active project can be resolved without scanning unrelated Canvas files.
+On desktop, resolve the active Sync vault through the official Obsidian CLI instead of hard-coding a Mac path:
+
+```bash
+python ../../scripts/obs_paper.py vault-path NLP
+```
+
+Use an explicit vault path on a headless server. `obsidian-headless` synchronizes files but does not provide the desktop Obsidian CLI.
+
+The research repository remains separate. `project.md` records its path for the current host so the active project can be resolved without scanning unrelated Canvas files. Do not reuse a Mac absolute path on a remote server; cross-host project resolution requires an explicit current-host path until host-scoped repository metadata is implemented.
 
 ## Storage access preflight
 
@@ -40,6 +50,8 @@ Choose the mode before changing files:
 - **Migration:** any existing Canvas, project folder, PDFs, bibliography, search log, or project-specific Zotero Collection must be preserved. Read [references/migrate-project.md](references/migrate-project.md) and follow it.
 
 Do not mix the two workflows. In particular, do not treat migration as an empty initialization followed by ad-hoc copying.
+
+For an existing folder already under `<Vault>/Projects/<Project>/`, use `project-standardize`. It adopts a single legacy Canvas name through `project.md`, creates missing support files, copies file-node targets into `assets/`, rewrites those nodes to vault-relative paths, and backs up every changed Canvas. It refuses missing references, ambiguous Canvases without metadata, and unequal asset-name collisions.
 
 ## Literature source of truth
 

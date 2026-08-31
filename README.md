@@ -65,6 +65,8 @@ The plugin can initialize or import `<Vault>/Projects/<Project>/`, works with it
 ```bash
 python plugins/obspaper/scripts/obs_paper.py project-init /path/to/NLP "My Project" --repository /path/to/repo
 python plugins/obspaper/scripts/obs_paper.py project-import /path/to/NLP "My Project" source.canvas --repository /path/to/repo
+python plugins/obspaper/scripts/obs_paper.py vault-path NLP
+python plugins/obspaper/scripts/obs_paper.py project-standardize /path/to/NLP "My Project"
 python plugins/obspaper/scripts/zotero_bridge.py status
 python plugins/obspaper/scripts/zotero_bridge.py project-setup "/path/to/NLP/Projects/My Project"
 python plugins/obspaper/scripts/zotero_bridge.py search "paper title"
