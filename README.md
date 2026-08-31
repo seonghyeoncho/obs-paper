@@ -63,18 +63,21 @@ The plugin can initialize or import `<Vault>/Projects/<Project>/`, works with it
 ## Unified vault and Zotero
 
 ```bash
-python plugins/obspaper/scripts/obs_paper.py project-init /path/to/NLP "My Project" --repository /path/to/repo
-python plugins/obspaper/scripts/obs_paper.py project-import /path/to/NLP "My Project" source.canvas --repository /path/to/repo
-python plugins/obspaper/scripts/obs_paper.py vault-path NLP
-python plugins/obspaper/scripts/obs_paper.py project-standardize /path/to/NLP "My Project"
+python plugins/obspaper/scripts/obs_paper.py vault-config /path/to/vault --name "Research"
+python plugins/obspaper/scripts/obs_paper.py vault-path
+python plugins/obspaper/scripts/obs_paper.py project-init /path/to/vault "My Project" --repository /path/to/repo
+python plugins/obspaper/scripts/obs_paper.py project-import /path/to/vault "My Project" source.canvas --repository /path/to/repo
+python plugins/obspaper/scripts/obs_paper.py project-standardize /path/to/vault "My Project"
 python plugins/obspaper/scripts/zotero_bridge.py status
-python plugins/obspaper/scripts/zotero_bridge.py project-setup "/path/to/NLP/Projects/My Project"
+python plugins/obspaper/scripts/zotero_bridge.py project-setup "/path/to/vault/Projects/My Project"
 python plugins/obspaper/scripts/zotero_bridge.py search "paper title"
-python plugins/obspaper/scripts/zotero_bridge.py record-search "/path/to/NLP/Projects/My Project" search.json
+python plugins/obspaper/scripts/zotero_bridge.py record-search "/path/to/vault/Projects/My Project" search.json
 python plugins/obspaper/scripts/zotero_bridge.py attach ZOTERO_ITEM_KEY paper.pdf
-python plugins/obspaper/scripts/zotero_bridge.py audit "/path/to/NLP/Projects/My Project"
-python plugins/obspaper/scripts/obs_paper.py paper-flow-build "/path/to/NLP/Projects/My Project" paper-flow.json
+python plugins/obspaper/scripts/zotero_bridge.py audit "/path/to/vault/Projects/My Project"
+python plugins/obspaper/scripts/obs_paper.py paper-flow-build "/path/to/vault/Projects/My Project" paper-flow.json
 ```
+
+The configured path is stored per host in `~/.config/obs-paper/config.json`, outside Obsidian Sync. Set `OBS_PAPER_VAULT` to override it temporarily.
 
 Each project uses an exact-name Zotero Collection as its literature source of truth. Selected papers and their stored PDF attachments live in Zotero, vault-wide sentence-level paper Canvases live under `Paper/`, only the project Collection is exported to `references.bib`, and searches are appended to `searches.jsonl`. No paper PDF is copied into Obsidian. Export is blocked if it would remove a citation key already used by the project. The Zotero bridge uses the desktop Local API. Reads require no account API key; Zotero 10+ writes request approval in Zotero at runtime. Better BibTeX is optional and preferred for stable LaTeX citation keys. External scholarly search remains separate from Zotero library search.
 

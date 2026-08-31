@@ -20,6 +20,7 @@ from obs_paper_engine import (
 from obs_project import (
     ProjectError,
     build_paper_flow,
+    configure_vault,
     import_project,
     init_project,
     resolve_project,
@@ -95,8 +96,14 @@ def main() -> None:
     standardize_parser.add_argument("--repository", type=Path)
 
     vault_parser = subparsers.add_parser("vault-path")
-    vault_parser.add_argument("name", nargs="?", default="NLP")
+    vault_parser.add_argument("name", nargs="?")
     vault_parser.add_argument("--obsidian", default="obsidian")
+    vault_parser.add_argument("--config", type=Path)
+
+    vault_config_parser = subparsers.add_parser("vault-config")
+    vault_config_parser.add_argument("path", type=Path)
+    vault_config_parser.add_argument("--name")
+    vault_config_parser.add_argument("--config", type=Path)
 
     nodes_parser = subparsers.add_parser("nodes")
     nodes_parser.add_argument("canvas", type=Path)
@@ -138,7 +145,9 @@ def main() -> None:
         elif args.command == "project-standardize":
             emit(standardize_project(args.vault, args.name, args.repository))
         elif args.command == "vault-path":
-            emit({"vault": args.name, "path": str(resolve_vault(args.name, args.obsidian))})
+            emit({"vault": args.name, "path": str(resolve_vault(args.name, args.obsidian, args.config))})
+        elif args.command == "vault-config":
+            emit(configure_vault(args.path, args.name, args.config))
         else:
             emit(build_paper_flow(args.project, args.spec, replace=args.replace))
     except (PlanError, PreconditionError, ProjectError, OSError, json.JSONDecodeError) as exc:

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -120,8 +121,60 @@ def init_project(vault: Path, name: str, repository: Path | None = None) -> dict
     }
 
 
-def resolve_vault(name: str = "NLP", executable: str = "obsidian") -> Path:
-    """Resolve a desktop Obsidian vault by its registered name."""
+def _vault_config_path(path: Path | None = None) -> Path:
+    configured = path or Path(os.environ.get("OBS_PAPER_CONFIG", "~/.config/obs-paper/config.json"))
+    return configured.expanduser().resolve()
+
+
+def _valid_vault(path: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    if not resolved.is_dir():
+        raise ProjectError(f"vault does not exist: {resolved}")
+    if not os.access(resolved, os.R_OK | os.W_OK):
+        raise ProjectError(f"vault must be readable and writable: {resolved}")
+    return resolved
+
+
+def configure_vault(path: Path, name: str | None = None, config_path: Path | None = None) -> dict[str, str]:
+    """Persist this host's active vault path outside the synced vault."""
+    vault = _valid_vault(path)
+    destination = _vault_config_path(config_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    data = {"path": str(vault)}
+    if name:
+        data["name"] = name
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(destination)
+    return {**data, "config": str(destination)}
+
+
+def _saved_vault(config_path: Path | None = None) -> Path | None:
+    override = os.environ.get("OBS_PAPER_VAULT")
+    if override:
+        return _valid_vault(Path(override))
+    source = _vault_config_path(config_path)
+    if not source.exists():
+        return None
+    try:
+        data = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProjectError(f"cannot read vault config {source}: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("path"), str):
+        raise ProjectError(f"vault config needs a string path: {source}")
+    return _valid_vault(Path(data["path"]))
+
+
+def resolve_vault(name: str | None = None, executable: str = "obsidian", config_path: Path | None = None) -> Path:
+    """Resolve an explicit vault, this host's config, or one registered desktop vault."""
+    if name:
+        candidate = Path(name).expanduser()
+        if candidate.is_dir():
+            return _valid_vault(candidate)
+    else:
+        configured = _saved_vault(config_path)
+        if configured:
+            return configured
     try:
         result = subprocess.run(
             [executable, "vaults", "verbose"],
@@ -131,10 +184,15 @@ def resolve_vault(name: str = "NLP", executable: str = "obsidian") -> Path:
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         raise ProjectError(f"cannot query Obsidian CLI: {exc}") from exc
-    matches = [Path(path) for vault_name, path in (line.split("\t", 1) for line in result.stdout.splitlines() if "\t" in line) if vault_name == name]
-    if len(matches) != 1 or not matches[0].is_dir():
-        raise ProjectError(f"vault must resolve once by name {name!r} ({len(matches)} matches)")
-    return matches[0].resolve()
+    registered = [(vault_name, Path(path)) for vault_name, path in (line.split("\t", 1) for line in result.stdout.splitlines() if "\t" in line)]
+    matches = [path for vault_name, path in registered if vault_name == name] if name else [path for _, path in registered]
+    if len(matches) != 1:
+        target = f"name {name!r}" if name else "the current host"
+        raise ProjectError(
+            f"vault must resolve once for {target} ({len(matches)} matches); "
+            "run vault-config /absolute/path/to/vault"
+        )
+    return _valid_vault(matches[0])
 
 
 def standardize_project(vault: Path, name: str, repository: Path | None = None) -> dict[str, Any]:

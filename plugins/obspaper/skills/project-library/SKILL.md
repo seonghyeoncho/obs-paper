@@ -22,13 +22,14 @@ Use one Obsidian vault with project folders and one shared paper-flow library:
     └── searches.jsonl
 ```
 
-On desktop, resolve the active Sync vault through the official Obsidian CLI instead of hard-coding a Mac path:
+Configure the active Sync vault once on every host. The setting is host-local and stays outside the synced vault, so paths may differ across users, Macs, and servers:
 
 ```bash
-python ../../scripts/obs_paper.py vault-path NLP
+python ../../scripts/obs_paper.py vault-config /absolute/path/to/vault --name "Research"
+python ../../scripts/obs_paper.py vault-path
 ```
 
-Use an explicit vault path on a headless server. `obsidian-headless` synchronizes files but does not provide the desktop Obsidian CLI.
+Never assume a vault name or path. `OBS_PAPER_VAULT` may temporarily override the saved path. On a desktop with no saved setting, `vault-path` may auto-detect only when the official Obsidian CLI reports exactly one vault. On a headless server, configure that server's local `obsidian-headless` Sync folder explicitly because headless Sync does not provide the desktop Obsidian CLI.
 
 The research repository remains separate. `project.md` records its path for the current host so the active project can be resolved without scanning unrelated Canvas files. Do not reuse a Mac absolute path on a remote server; cross-host project resolution requires an explicit current-host path until host-scoped repository metadata is implemented.
 

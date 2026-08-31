@@ -13,6 +13,7 @@ sys.path.insert(0, str(SCRIPTS))
 from obs_project import (  # noqa: E402
     ProjectError,
     build_paper_flow,
+    configure_vault,
     import_project,
     init_project,
     resolve_project,
@@ -186,8 +187,24 @@ class ProjectZoteroTest(unittest.TestCase):
             vault.mkdir()
             completed = MagicMock(stdout=f"Other\t/tmp/other\nNLP\t{vault}\n")
             with patch("obs_project.subprocess.run", return_value=completed) as run:
-                self.assertEqual(resolve_vault(), vault.resolve())
+                self.assertEqual(resolve_vault("NLP"), vault.resolve())
             run.assert_called_once_with(["obsidian", "vaults", "verbose"], check=True, capture_output=True, text=True)
+
+    def test_vault_config_is_host_local_and_environment_can_override_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            configured = root / "configured"
+            override = root / "override"
+            configured.mkdir()
+            override.mkdir()
+            config = root / "config.json"
+            result = configure_vault(configured, "Research", config)
+            self.assertEqual(result["path"], str(configured.resolve()))
+            with patch("obs_project.subprocess.run") as run:
+                self.assertEqual(resolve_vault(config_path=config), configured.resolve())
+                run.assert_not_called()
+            with patch.dict("os.environ", {"OBS_PAPER_VAULT": str(override)}):
+                self.assertEqual(resolve_vault(config_path=config), override.resolve())
 
     def test_build_paper_flow_creates_linked_idempotent_canvas(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

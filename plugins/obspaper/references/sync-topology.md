@@ -28,6 +28,15 @@ The vault-level `Paper/` library contains only paper-flow Canvases needed by act
 
 Sync distributes vault files, not research repositories, Claude or Codex sessions, SSH credentials, or agent plugins. Install the obs-paper plugin on every host that may edit the vault and keep each research repository separately available on that host.
 
+Register each host's local Sync folder once; never copy another user's absolute path:
+
+```bash
+python obs_paper.py vault-config /absolute/path/to/local-vault --name "Research"
+python obs_paper.py vault-path
+```
+
+This writes `~/.config/obs-paper/config.json`, outside the vault. `OBS_PAPER_VAULT` overrides it for an ephemeral session. With no setting, desktop auto-discovery is allowed only when the official Obsidian CLI reports exactly one vault.
+
 Repository paths are host-specific. Never trust an absolute `repository` value written by another host. Project metadata and resolution must support a path for the current host before remote execution becomes automatic; until then, require an explicit project and repository path.
 
 ## Canvas writer rule
