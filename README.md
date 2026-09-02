@@ -85,7 +85,7 @@ Each project uses an exact-name Zotero Collection as its literature source of tr
 
 The CLI compiles a human-readable JSON request into a SHA-bound Canvas patch, applies it atomically with a timestamped backup, and supports deterministic reruns.
 
-`nodes` reads cards by exact ID, returning each card's text, group, colour, geometry, and edges on both sides. Managed research-flow cards print their own ID as their last line, so a card can be addressed without searching the Canvas.
+`nodes` reads cards by exact ID, returning each card's text, group, colour, geometry, and edges on both sides. `edit_text` writes the other way, replacing a card's prose while leaving its kind, colour, and geometry alone, so settling on a term across a flow does not mean re-declaring every card that uses it. Managed research-flow cards print their own ID as their last line, so a card can be addressed without searching the Canvas.
 
 ```bash
 python plugins/obspaper/scripts/obs_paper.py nodes "/path/to/Project.canvas" rfparams00000001 rfanswer1rq10001
@@ -119,7 +119,7 @@ Record the resulting project id as `overleaf_project` in the project's `project.
 | `camera-ready-mapping` | `mapping_master`, `map_issue`, `remove_items` |
 | `camera-ready` | `build_camera_ready` |
 | `rebuttal` | `layout_rebuttal` |
-| `research-flow` | `add_research_flow` |
+| `research-flow` | `add_research_flow`, `edit_text`, `link_literature`, `remove_items` |
 
 ```json
 {

@@ -1275,3 +1275,142 @@ class ObsPaperEngineTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ResearchFlowMaintenanceTest(unittest.TestCase):
+    def canvas(self) -> dict[str, object]:
+        return {
+            "nodes": [
+                {"id": "g", "type": "group", "label": "flow", "x": 0, "y": 0, "width": 900, "height": 500},
+                {
+                    "id": "a" * 16,
+                    "type": "text",
+                    "x": 0,
+                    "y": 0,
+                    "width": 812,
+                    "height": 120,
+                    "color": "6",
+                    "text": "# 원래 질문\n\n" + f"`{'a' * 16}`",
+                },
+            ],
+            "edges": [],
+        }
+
+    def request(self, *actions: dict[str, object]) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "workflow": "research-flow",
+            "target": {"group_label": "flow"},
+            "actions": list(actions),
+        }
+
+    def test_a_card_past_the_bottom_grows_the_group(self) -> None:
+        request = self.request({
+            "op": "add_research_flow",
+            "nodes": [{"key": "rq9", "kind": "rq", "text": "새 질문", "x": 0, "y": 1200}],
+            "links": [],
+        })
+        patch = compile_document(self.canvas(), request, document_id="t")
+        group = next(op["after"] for op in patch["operations"] if op["op"] == "upsert_group")
+        self.assertEqual(group["height"], 1200 + 105 + 20)
+        self.assertEqual(group["y"], 0)
+
+    def test_a_card_above_the_origin_is_still_refused(self) -> None:
+        request = self.request({
+            "op": "add_research_flow",
+            "nodes": [{"key": "rq9", "kind": "rq", "text": "새 질문", "x": 0, "y": -50}],
+            "links": [],
+        })
+        with self.assertRaises(PlanError) as raised:
+            compile_document(self.canvas(), request, document_id="t")
+        self.assertIn("'rq9'", str(raised.exception))
+        self.assertIn("y=-50", str(raised.exception))
+
+    def test_a_figure_needs_a_file_and_no_text(self) -> None:
+        request = self.request({
+            "op": "add_research_flow",
+            "nodes": [{
+                "key": "fig11",
+                "kind": "figure",
+                "file": "Projects/P/assets/fig11.png",
+                "x": 0,
+                "y": 200,
+                "width": 812,
+                "height": 305,
+            }],
+            "links": [],
+        })
+        patch = compile_document(self.canvas(), request, document_id="t")
+        figure = next(op["after"] for op in patch["operations"] if op["op"] == "upsert_node")
+        self.assertEqual(figure["type"], "file")
+        self.assertNotIn("text", figure)
+
+    def test_an_unknown_link_key_names_the_known_ones(self) -> None:
+        request = self.request({
+            "op": "add_research_flow",
+            "nodes": [
+                {
+                    "key": "e9",
+                    "kind": "experiment",
+                    "text": "run",
+                    "x": 0,
+                    "y": 0,
+                    "sections": [{"key": "setup", "heading": "Setup", "text": "cfg"}],
+                },
+                {"key": "impl9", "kind": "implementation", "text": "code", "x": 0, "y": 400},
+            ],
+            "links": [["impl9", "setup"]],
+        })
+        with self.assertRaises(PlanError) as raised:
+            compile_document(self.canvas(), request, document_id="t")
+        message = str(raised.exception)
+        self.assertIn("'setup'", message)
+        self.assertIn("e9:setup", message)
+
+    def test_a_missing_op_key_says_so(self) -> None:
+        with self.assertRaises(PlanError) as raised:
+            compile_document(self.canvas(), self.request({"type": "add_research_flow"}), document_id="t")
+        self.assertIn('"op"', str(raised.exception))
+        self.assertIn("edit_text", str(raised.exception))
+
+    def test_edit_text_keeps_colour_and_geometry(self) -> None:
+        request = self.request({
+            "op": "edit_text",
+            "nodes": [{"node_id": "a" * 16, "text": "# 고친 질문"}],
+        })
+        patch = compile_document(self.canvas(), request, document_id="t")
+        after = patch["operations"][0]["after"]
+        self.assertEqual(after["color"], "6")
+        self.assertEqual((after["x"], after["y"], after["width"], after["height"]), (0, 0, 812, 120))
+        self.assertEqual(after["text"], "# 고친 질문\n\n" + f"`{'a' * 16}`")
+
+    def test_edit_text_replaces_a_stamp_carried_in_from_another_card(self) -> None:
+        request = self.request({
+            "op": "edit_text",
+            "nodes": [{"node_id": "a" * 16, "text": "# 복사해온 본문\n\n" + f"`{'b' * 16}`"}],
+        })
+        after = compile_document(self.canvas(), request, document_id="t")["operations"][0]["after"]
+        self.assertEqual(after["text"].count("`"), 2)
+        self.assertTrue(after["text"].endswith(f"`{'a' * 16}`"))
+
+    def test_edit_text_is_idempotent(self) -> None:
+        request = self.request({
+            "op": "edit_text",
+            "nodes": [{"node_id": "a" * 16, "text": "# 고친 질문"}],
+        })
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = Path(directory) / "paper.canvas"
+            canvas.write_text(json.dumps(self.canvas()), encoding="utf-8")
+            patch = compile_request(canvas, request)
+            self.assertEqual(apply_patch(canvas, patch)["status"], "applied")
+            self.assertEqual(compile_request(canvas, request)["operations"], [])
+
+    def test_edit_text_refuses_a_node_it_cannot_rewrite(self) -> None:
+        for spec, expected in (
+            ({"node_id": "nope", "text": "x"}, "not in this Canvas"),
+            ({"node_id": "g", "text": "x"}, "holds no text"),
+            ({"node_id": "a" * 16, "text": "   "}, "non-empty text"),
+        ):
+            with self.assertRaises(PlanError) as raised:
+                compile_document(self.canvas(), self.request({"op": "edit_text", "nodes": [spec]}), document_id="t")
+            self.assertIn(expected, str(raised.exception))

@@ -7,9 +7,12 @@ Use one JSON object:
   "schema_version": 1,
   "workflow": "paper",
   "target": {"group_id": "..."},
-  "actions": []
+  "actions": [{"op": "group_appendix", "label": "...", "member_ids": ["..."]}]
 }
 ```
+
+Every action names itself under `op`. The action lists below are written as
+`op-name`: required fields; optional ones follow a semicolon.
 
 `target` contains exactly one of `group_id` or `group_label`. Resolve IDs with `inspect`. Stable `key` values produce deterministic IDs.
 
@@ -32,6 +35,8 @@ Use one JSON object:
 
 - `mapping_master`: `key`, `x`, `y`, `width`, `manuscript_node_ids`, and `items`. Each item has `reviewer`, real `label`, `topic`, and `status`.
 - `map_issue`: `key`, real reviewer/topic `label`, `asked`, `change`, `evidence`, `status`, `done_when`, one-element `target_ids`, `x`, `y`; optional title `node_id`, per-field `detail_node_ids`, `width`, and title `height`. It creates one orange title node followed by separate Asked, Evidence, Status, Done when, and Change nodes; only the title connects to the manuscript target.
+- A card placed past the target group's right or bottom edge grows the group to hold it, so a new question can be appended below an existing flow without resizing anything first. A card placed above or left of the group's origin is refused instead: moving the origin would swallow whatever sits outside.
+- `edit_text`: `nodes`, each with `node_id` and the replacement `text`; optional `height`. It rewrites prose and changes nothing else -- kind, colour, and geometry stay as they stand -- which is what settling on a term or polishing a sentence needs. Pass the body; the stamp is handled here, including a stale one carried in from another card. A file node has no text to rewrite.
 - `remove_items`: explicit `node_ids` and `edge_ids`. Include every edge incident to a removed node.
 
 Allowed mapping statuses are `wording`, `ready`, `pending`, `author input`, and `blocked`.
@@ -50,16 +55,18 @@ Allowed mapping statuses are `wording`, `ready`, `pending`, `author input`, and 
 
 ## Research-flow action
 
-`add_research_flow` requires keyed `nodes` and explicit two-key `links`.
+`add_research_flow` requires keyed `nodes` and explicit two-key `links`. Maintenance uses `edit_text` and `remove_items`.
 
 - Ordinary node: `key`, `kind`, `text`, `x`, `y`; optional geometry.
 - `kind` is one of `rq`, `experiment`, `answer`, `bridge`, `thought` (coloured, in the flow) or `source`, `table`, `figure`, `implementation`, `params`, `log` (uncoloured side cards). Flow kinds get an H1 prefix when the text has no heading; side cards, bridges, and thoughts keep their text verbatim.
 - `implementation`: one per experiment, a two-column table of run grid, paths, commands, commits, and outputs, optionally followed by a `**추가 메모**` paragraph. `params`: one per project, the thresholds and model names that hold across experiments. `log`: a run that produced no usable evidence. Record why it was discarded and where its outputs are, but not its measurements: a discarded number is not worth keeping. A discarded run never stays a green experiment in the flow. See `skills/research-flow/references/content-structure.md`.
-- Figure: also supply `file`, `width`, and `height`.
-- Experiment: optionally supply ordered `sections`, each with `key`, `heading`, `text`, and optional `height`. `heading` must be exactly `Setup` or `Results`. Status, configuration, and scoring parameters belong in the experiment title or an implementation card, never in a section heading. There is no validity section: whether a run was usable is a property of the run, so completeness, robustness, and data-quality checks go in that experiment's implementation card.
-- Every managed card is stamped with its own node id as its last line, so a card can be addressed with `obs_paper.py nodes` without searching. The handler adds it; supply text without one. Stamping is idempotent, so a rerun does not duplicate it, and figures carry no text to stamp.
+- Figure: supply `file`, `width`, and `height` instead of `text`. A figure is a file node, so it takes no text and is the one kind that does not need any.
+- Experiment: optionally supply ordered `sections`, each with `key`, `heading`, `text`, and optional `height`. A section is linked as `"<experiment key>:<section key>"` -- section `setup` of experiment `e9` is `"e9:setup"` -- because a section key only has to be unique inside its experiment. An unresolved link key lists the keys that do resolve. `heading` must be exactly `Setup` or `Results`. Status, configuration, and scoring parameters belong in the experiment title or an implementation card, never in a section heading. There is no validity section: whether a run was usable is a property of the run, so completeness, robustness, and data-quality checks go in that experiment's implementation card.
+- Every managed card is stamped with its own node id as its last line, so a card can be addressed with `obs_paper.py nodes` without searching. The handler adds it, so supply the body alone; a stamp that arrives anyway is not duplicated, and one carrying another card's id is replaced rather than kept. Figures carry no text to stamp.
 - Link direction: a side card originates its link and points into the flow, because the card being referred to aims at the card that refers to it. Write `["impl", "setup"]`, not `["setup", "impl"]`; the reverse is rejected. Side-card links get geometric sides, flow links run bottom to top. The red `thought` card is the only reverse case: it originates a right-to-left link at whatever it questions.
 - `link_literature`: `key`, exact research `target_id`, verified `title`, `citekey`, and Zotero `item_key`; optional existing vault-relative `paper_flow`, `relevance`, `lane`, and explicit geometry. It creates one uncoloured source card and a source-to-question edge. Create separate target-specific cards when one paper supports multiple questions.
+- A card placed past the target group's right or bottom edge grows the group to hold it, so a new question can be appended below an existing flow without resizing anything first. A card placed above or left of the group's origin is refused instead: moving the origin would swallow whatever sits outside.
+- `edit_text`: `nodes`, each with `node_id` and the replacement `text`; optional `height`. It rewrites prose and changes nothing else -- kind, colour, and geometry stay as they stand -- which is what settling on a term or polishing a sentence needs. Pass the body; the stamp is handled here, including a stale one carried in from another card. A file node has no text to rewrite.
 - `remove_items`: explicit `node_ids` and `edge_ids`. Include every edge incident to a removed node.
 
 ## Paper-flow build spec

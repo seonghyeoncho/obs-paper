@@ -139,6 +139,25 @@ def node_rect(node: dict[str, Any]) -> Rect:
     return Rect(node["x"], node["y"], node["width"], node["height"])
 
 
+def _require_inside_group_origin(node: dict[str, Any], group: Rect, what: str) -> None:
+    """Reject a node above or left of the group; past the far edge the group grows.
+
+    Growing the right and bottom edges keeps every existing member inside. Moving
+    the origin would not: the group would swallow whatever sits above or left of
+    it, so a node placed there is a mistake in the request, not a group too small.
+    """
+    if node["x"] < group.x:
+        raise PlanError(
+            f"{what} at x={node['x']} is left of the target group's x={group.x}; "
+            "a group grows right and down, never past its own origin"
+        )
+    if node["y"] < group.y:
+        raise PlanError(
+            f"{what} at y={node['y']} is above the target group's y={group.y}; "
+            "a group grows right and down, never past its own origin"
+        )
+
+
 def rects_overlap(left: Rect, right: Rect) -> bool:
     return (
         min(left.right, right.right) > max(left.x, right.x)
@@ -178,15 +197,22 @@ RESEARCH_FLOW_SECTION_HEADINGS = frozenset({"Setup", "Results"})
 PAPER_HEADING_COLOR = {"section": "6", "subsection": "5", "paragraph": "4"}
 
 
+_NODE_ID_STAMP = re.compile(r"\n*`[0-9a-f]{16}`\s*$")
+
+
 def stamp_node_id(text: str, node_id: str) -> str:
     """End a managed card with its own node id so it can be addressed directly.
 
     Idempotent: re-stamping a card that already carries its id leaves it alone.
+    A stamp carrying some other id is replaced, not kept, so text copied from one
+    card into another does not arrive wearing the wrong id -- and so a caller
+    rewriting a card can pass the text it read back without stripping the stamp.
     """
     tag = f"`{node_id}`"
     body = text.rstrip()
     if body.endswith(tag):
         return body
+    body = _NODE_ID_STAMP.sub("", body).rstrip()
     return f"{body}\n\n{tag}"
 
 
@@ -1359,24 +1385,35 @@ def _compile_add_research_flow(
     entry_ids: dict[str, str] = {}
     exit_ids: dict[str, str] = {}
     kinds: dict[str, str] = {}
+    managed_ids: list[str] = []
     target_rect = node_rect(target_group)
     for spec in specs:
         kind, text = spec.get("kind"), spec.get("text")
-        if kind not in {*colors, *RESEARCH_FLOW_SIDE_KINDS} or not isinstance(text, str) or not text.strip():
-            raise PlanError("invalid research-flow node kind or text")
+        if kind not in {*colors, *RESEARCH_FLOW_SIDE_KINDS}:
+            raise PlanError(
+                f"research-flow node {spec['key']!r} has kind {kind!r}; "
+                f"expected one of {sorted({*colors, *RESEARCH_FLOW_SIDE_KINDS})}"
+            )
+        # A figure is a file node. It carries no text, so it neither needs one nor
+        # gets stamped; every other kind is prose and must say something.
+        if kind != "figure" and (not isinstance(text, str) or not text.strip()):
+            raise PlanError(f"research-flow node {spec['key']!r} needs non-empty text")
         node_id = spec.get("node_id") or deterministic_id(target_group["id"], "research_flow", spec["key"])
         width = spec.get("width", 812)
         x, y = spec.get("x"), spec.get("y")
         if any(not isinstance(value, int) for value in (x, y, width)) or width <= 0:
-            raise PlanError("research-flow node geometry must use integers")
-        rendered_text = (
-            text if kind in {"bridge", "thought", *RESEARCH_FLOW_SIDE_KINDS} or text.startswith("#") else f"# {text}"
-        )
+            raise PlanError(
+                f"research-flow node {spec['key']!r} needs integer x, y, and positive width; "
+                f"got x={x!r}, y={y!r}, width={width!r}"
+            )
         if kind != "figure":
+            rendered_text = (
+                text if kind in {"bridge", "thought", *RESEARCH_FLOW_SIDE_KINDS} or text.startswith("#") else f"# {text}"
+            )
             rendered_text = stamp_node_id(rendered_text, node_id)
         if kind == "figure":
             if not isinstance(spec.get("file"), str) or not spec["file"]:
-                raise PlanError("research-flow figures need a file")
+                raise PlanError(f"research-flow figure {spec['key']!r} needs a vault-relative file path")
             after = {
                 "id": node_id,
                 "type": "file",
@@ -1401,8 +1438,8 @@ def _compile_add_research_flow(
             }
         if kind in colors:
             after["color"] = colors[kind]
-        if not target_rect.contains(after):
-            raise PlanError("research-flow node is outside the target group")
+        _require_inside_group_origin(after, target_rect, f"research-flow node {spec['key']!r}")
+        managed_ids.append(node_id)
         entry_ids[spec["key"]] = node_id
         exit_ids[spec["key"]] = node_id
         kinds[spec["key"]] = kind
@@ -1442,8 +1479,10 @@ def _compile_add_research_flow(
                     "color": "4",
                     "text": section_text,
                 }
-                if not target_rect.contains(section_node):
-                    raise PlanError("research-flow experiment section is outside the target group")
+                _require_inside_group_origin(
+                    section_node, target_rect, f"research-flow section {section_key!r}"
+                )
+                managed_ids.append(section_id)
                 entry_ids[section_key] = section_id
                 exit_ids[section_key] = section_id
                 kinds[section_key] = "experiment-section"
@@ -1451,8 +1490,17 @@ def _compile_add_research_flow(
                 _append_operation(scratch, operations, _node_operation(scratch, section_node, target_group_id=target_group["id"]))
                 section_y += section_node["height"] + 20
     for link in links:
-        if not isinstance(link, list) or len(link) != 2 or link[0] not in exit_ids or link[1] not in entry_ids:
-            raise PlanError("research-flow links must contain two known keys")
+        if not isinstance(link, list) or len(link) != 2:
+            raise PlanError(f"research-flow link must be a pair of keys, got {link!r}")
+        unknown = [
+            key for key, table in zip(link, (exit_ids, entry_ids)) if key not in table
+        ]
+        if unknown:
+            raise PlanError(
+                f"unknown research-flow link key(s) {unknown!r}; "
+                f"known keys are {sorted(entry_ids)}. An experiment section is "
+                "addressed as \"<experiment key>:<section key>\", not by its own key alone"
+            )
         if kinds[link[1]] in RESEARCH_FLOW_SIDE_KINDS and kinds[link[0]] not in RESEARCH_FLOW_SIDE_KINDS:
             raise PlanError(
                 f"research-flow side card '{link[1]}' must originate its link, not receive it; "
@@ -1476,6 +1524,68 @@ def _compile_add_research_flow(
                 to_side=target_side,
             ),
         )
+    managed = [scratch.node(node_id) for node_id in managed_ids]
+    group_after = copy.deepcopy(scratch.node(target_group["id"]))
+    group_after["width"] = max(group_after["width"], max(node["x"] + node["width"] for node in managed) - group_after["x"] + 20)
+    group_after["height"] = max(group_after["height"], max(node["y"] + node["height"] for node in managed) - group_after["y"] + 20)
+    _append_operation(scratch, operations, _node_operation(scratch, group_after))
+    return operations
+
+
+def _compile_edit_text(
+    document: CanvasDocument,
+    action: dict[str, Any],
+    target_group: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Replace the prose of existing cards and change nothing else.
+
+    Settling on a term or polishing a sentence is routine maintenance, and until
+    now the only way through was to re-declare the card -- kind, colour, and every
+    coordinate -- through the compiler that creates it. Geometry is therefore left
+    exactly as it stands: a caller who also wants the card resized says so with an
+    explicit height, and the stamp is handled here rather than by every caller.
+    """
+    specs = action.get("nodes")
+    if not isinstance(specs, list) or not specs:
+        raise PlanError("edit_text needs a non-empty nodes list")
+    node_ids = [spec.get("node_id") if isinstance(spec, dict) else None for spec in specs]
+    if any(not isinstance(node_id, str) or not node_id for node_id in node_ids):
+        raise PlanError("every edit_text node needs a node_id")
+    if len(node_ids) != len(set(node_ids)):
+        raise PlanError(f"edit_text addresses a node twice: {sorted({i for i in node_ids if node_ids.count(i) > 1})}")
+    target_rect = node_rect(target_group)
+    scratch = CanvasDocument(copy.deepcopy(document.data))
+    operations: list[dict[str, Any]] = []
+    for spec in specs:
+        node_id, text = spec["node_id"], spec.get("text")
+        current = document.node_map().get(node_id)
+        if current is None:
+            raise PlanError(f"edit_text node {node_id!r} is not in this Canvas")
+        if current.get("type") != "text":
+            hint = (
+                "a figure is replaced by pointing it at another file"
+                if current.get("type") == "file"
+                else "edit_text rewrites prose cards only"
+            )
+            raise PlanError(
+                f"edit_text node {node_id!r} is a {current.get('type')!r} node and holds no text; {hint}"
+            )
+        if not target_rect.contains(current):
+            raise PlanError(f"edit_text node {node_id!r} is outside the target group")
+        if not isinstance(text, str) or not text.strip():
+            raise PlanError(f"edit_text node {node_id!r} needs non-empty text")
+        height = spec.get("height", current["height"])
+        if not isinstance(height, int) or height <= 0:
+            raise PlanError(f"edit_text node {node_id!r} needs a positive integer height, got {height!r}")
+        after = {**copy.deepcopy(current), "text": stamp_node_id(text, node_id), "height": height}
+        _require_inside_group_origin(after, target_rect, f"edit_text node {node_id!r}")
+        _append_operation(scratch, operations, _node_operation(scratch, after, target_group_id=target_group["id"]))
+    if not operations:
+        return operations
+    managed = [scratch.node(node_id) for node_id in node_ids]
+    group_after = copy.deepcopy(scratch.node(target_group["id"]))
+    group_after["height"] = max(group_after["height"], max(node["y"] + node["height"] for node in managed) - group_after["y"] + 20)
+    _append_operation(scratch, operations, _node_operation(scratch, group_after))
     return operations
 
 
@@ -1715,6 +1825,7 @@ REQUEST_COMPILERS: dict[
     "map_issue": _compile_map_issue,
     "mapping_master": _compile_mapping_master,
     "remove_items": _compile_remove_items,
+    "edit_text": _compile_edit_text,
     "layout_rebuttal": _compile_layout_rebuttal,
     "add_research_flow": _compile_add_research_flow,
     "build_camera_ready": _compile_build_camera_ready,
@@ -1738,7 +1849,7 @@ WORKFLOW_ACTIONS = {
     "camera-ready-mapping": {"map_issue", "mapping_master", "remove_items"},
     "camera-ready": {"build_camera_ready"},
     "rebuttal": {"layout_rebuttal"},
-    "research-flow": {"add_research_flow", "link_literature", "remove_items"},
+    "research-flow": {"add_research_flow", "link_literature", "remove_items", "edit_text"},
 }
 
 
@@ -1868,7 +1979,11 @@ def compile_document(
             raise PlanError("each action must be an object")
         compiler = REQUEST_COMPILERS.get(action.get("op"))
         if compiler is None or action.get("op") not in WORKFLOW_ACTIONS[workflow]:
-            raise PlanError(f"unsupported request action: {action.get('op')!r}")
+            raise PlanError(
+                f"unsupported request action: {action.get('op')!r} "
+                f"(each action names itself under the key \"op\"); "
+                f"workflow {workflow!r} allows {sorted(WORKFLOW_ACTIONS[workflow])}"
+            )
         try:
             compiled = compiler(document, action, document.node(target_group["id"]))
         except PlanError as exc:

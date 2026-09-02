@@ -12,7 +12,7 @@ Treat the user's research notes and existing Obsidian Canvas as paired research 
 - Read `../../references/request-schema.md` before authoring a request.
 - Read `../../references/sync-topology.md` before mutating a Canvas in the active Obsidian Sync vault. Sync does not make concurrent Canvas editing safe.
 - Read `references/content-structure.md` before writing or revising node text: content reconstruction, node splitting, metadata separation, or Korean editing. Ordinary layout work does not need it.
-- Use `../../scripts/obs_paper.py` with workflow `research-flow` and actions `add_research_flow`, `link_literature`, or `remove_items` after inspecting the existing grammar.
+- Use `../../scripts/obs_paper.py` with workflow `research-flow` and actions `add_research_flow`, `edit_text`, `link_literature`, or `remove_items` after inspecting the existing grammar. To change what a card says and nothing else -- a settled term, a polished sentence -- use `edit_text` with the node id; it keeps the kind, colour, and geometry that `add_research_flow` would make you restate, and handles the id stamp itself. Never edit the `.canvas` file by hand to make a card fit: a card past the group's right or bottom edge grows the group.
 - Supply stable keyed nodes with exact geometry and explicit links. Use kinds `rq`, `experiment`, `answer`, `bridge`, `thought`, `source`, `table`, or `figure`.
 - Give an experiment ordered `sections` for its setup/results/control compound. The handler creates green H2 cards without internal arrows and routes outgoing flow from the final section.
 - Supply an actual `file` for a figure and the complete Markdown source for a table. The handler rejects figure placeholders.
