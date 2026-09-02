@@ -184,6 +184,25 @@ _TABLE_RULE = re.compile(r"^\|[\s:|-]+\|$")
 # discarded rather than kept, so it never becomes a green experiment.
 RESEARCH_FLOW_SIDE_KINDS = frozenset({"source", "table", "figure", "implementation", "params", "log"})
 
+# A research flow grows in time order, so a failed run, a ruled-out alternative,
+# and a robustness check end up interleaved with the argument the paper will
+# make. Past a couple of hundred cards the main stream stops being readable, and
+# none of that evidence can be deleted -- it is why the next card exists. So the
+# flow carries two streams. `main` is the column that reads top to bottom; the
+# `appendix` sub-group holds the evidence beside it at the same y, so its height
+# still says when in the argument it arrived.
+RESEARCH_FLOW_STREAMS = ("main", "appendix")
+RESEARCH_FLOW_APPENDIX_LABEL = re.compile(r"appendix", re.I)
+
+# An edge's colour says which streams it joins, so a glance separates the spine
+# from its supporting evidence. main -> appendix is absent on purpose: it is
+# refused, the same way a side card must originate its own link.
+RESEARCH_FLOW_STREAM_EDGE_COLOR = {
+    ("main", "main"): "4",
+    ("appendix", "main"): "#8a96a1",
+    ("appendix", "appendix"): "#c9d2da",
+}
+
 # Experiment section headings carry the section type alone. Status, configuration,
 # and scoring parameters belong in the experiment title or an implementation card.
 # There is no validity section: whether a run was usable is a property of the run,
@@ -301,6 +320,7 @@ def _edge_operation(
     to_node: str,
     from_side: str,
     to_side: str,
+    color: str | None = None,
 ) -> dict[str, Any] | None:
     document.node(from_node)
     document.node(to_node)
@@ -313,6 +333,8 @@ def _edge_operation(
         "toNode": to_node,
         "toSide": to_side,
     }
+    if color:
+        after["color"] = color
     operation = {
         "op": "upsert_edge",
         "edge_id": edge_id,
@@ -1386,6 +1408,8 @@ def _compile_add_research_flow(
     exit_ids: dict[str, str] = {}
     kinds: dict[str, str] = {}
     managed_ids: list[str] = []
+    streams: dict[str, str] = {}
+    appendix_ids: list[str] = []
     target_rect = node_rect(target_group)
     for spec in specs:
         kind, text = spec.get("kind"), spec.get("text")
@@ -1438,8 +1462,17 @@ def _compile_add_research_flow(
             }
         if kind in colors:
             after["color"] = colors[kind]
+        stream = spec.get("stream", "main")
+        if stream not in RESEARCH_FLOW_STREAMS:
+            raise PlanError(
+                f"research-flow node {spec['key']!r} has stream {stream!r}; "
+                f"expected one of {list(RESEARCH_FLOW_STREAMS)}"
+            )
         _require_inside_group_origin(after, target_rect, f"research-flow node {spec['key']!r}")
         managed_ids.append(node_id)
+        if stream == "appendix":
+            appendix_ids.append(node_id)
+        streams[spec["key"]] = stream
         entry_ids[spec["key"]] = node_id
         exit_ids[spec["key"]] = node_id
         kinds[spec["key"]] = kind
@@ -1483,6 +1516,9 @@ def _compile_add_research_flow(
                     section_node, target_rect, f"research-flow section {section_key!r}"
                 )
                 managed_ids.append(section_id)
+                if stream == "appendix":
+                    appendix_ids.append(section_id)
+                streams[section_key] = stream
                 entry_ids[section_key] = section_id
                 exit_ids[section_key] = section_id
                 kinds[section_key] = "experiment-section"
@@ -1515,21 +1551,192 @@ def _compile_add_research_flow(
         _append_operation(
             scratch,
             operations,
-            _edge_operation(
+            _stream_edge(
                 scratch,
                 key_parts=[target_group["id"], "research_edge", *link],
                 from_node=exit_ids[link[0]],
                 to_node=entry_ids[link[1]],
+                from_stream=streams[link[0]],
+                to_stream=streams[link[1]],
                 from_side=side,
                 to_side=target_side,
             ),
         )
+    if appendix_ids:
+        _append_operation(
+            scratch,
+            operations,
+            _refit_appendix_group(scratch, target_group, appendix_ids, action.get("appendix_label")),
+        )
+        managed_ids.append(_appendix_group_id(scratch, target_group, action.get("appendix_label")))
     managed = [scratch.node(node_id) for node_id in managed_ids]
-    group_after = copy.deepcopy(scratch.node(target_group["id"]))
-    group_after["width"] = max(group_after["width"], max(node["x"] + node["width"] for node in managed) - group_after["x"] + 20)
-    group_after["height"] = max(group_after["height"], max(node["y"] + node["height"] for node in managed) - group_after["y"] + 20)
-    _append_operation(scratch, operations, _node_operation(scratch, group_after))
+    _append_operation(scratch, operations, _grow_group_around(scratch, target_group, managed))
     return operations
+
+
+def research_flow_appendix_group(document: CanvasDocument, target_group: dict[str, Any]) -> dict[str, Any] | None:
+    """The appendix sub-group inside this flow, if one has been made yet.
+
+    The stream is not a field on a card; it is where the card sits, exactly as a
+    card's kind is its colour. That keeps the Canvas readable on its own and
+    survives a round trip through Obsidian, which owns the file's schema.
+    """
+    target_rect = node_rect(target_group)
+    matches = [
+        node
+        for node in document.nodes
+        if node.get("type") == "group"
+        and node["id"] != target_group["id"]
+        and isinstance(node.get("label"), str)
+        and RESEARCH_FLOW_APPENDIX_LABEL.search(node["label"])
+        and target_rect.contains(node)
+    ]
+    if len(matches) > 1:
+        raise PlanError(
+            f"the flow has {len(matches)} appendix sub-groups "
+            f"({sorted(node['label'] for node in matches)}); it must have one"
+        )
+    return matches[0] if matches else None
+
+
+def research_flow_stream(document: CanvasDocument, node: dict[str, Any], appendix: dict[str, Any] | None) -> str:
+    return "appendix" if appendix and node_rect(appendix).contains(node) else "main"
+
+
+def _stream_edge(
+    document: CanvasDocument,
+    *,
+    key_parts: list[str],
+    from_node: str,
+    to_node: str,
+    from_stream: str,
+    to_stream: str,
+    from_side: str,
+    to_side: str,
+) -> dict[str, Any] | None:
+    """One flow edge, refusing the direction that breaks the main stream.
+
+    An arrow leaving the main stream for the appendix sends the reader out of the
+    argument mid-sentence. Evidence points in, the way a side card does, so the
+    main column can be read straight down.
+    """
+    color = RESEARCH_FLOW_STREAM_EDGE_COLOR.get((from_stream, to_stream))
+    if color is None:
+        raise PlanError(
+            f"a {from_stream} card cannot point at an {to_stream} card; "
+            "appendix evidence points into the main stream, not the other way round"
+        )
+    return _edge_operation(
+        document,
+        key_parts=key_parts,
+        from_node=from_node,
+        to_node=to_node,
+        from_side=from_side,
+        to_side=to_side,
+        color=color,
+    )
+
+
+def _grow_group_around(
+    document: CanvasDocument, target_group: dict[str, Any], members: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Widen the flow group to hold its cards, but never over a neighbouring group.
+
+    Growing right and down is safe with respect to the group's own contents, and
+    not with respect to the rest of the Canvas: a research flow sits beside the
+    manuscript groups, so an appendix column placed too far right would put the
+    flow group on top of `paper_v1`. Obsidian reads membership from geometry, so
+    that silently hands one group's cards to the other.
+    """
+    group_after = copy.deepcopy(document.node(target_group["id"]))
+    group_after["width"] = max(
+        group_after["width"], max(node["x"] + node["width"] for node in members) - group_after["x"] + 20
+    )
+    group_after["height"] = max(
+        group_after["height"], max(node["y"] + node["height"] for node in members) - group_after["y"] + 20
+    )
+    grown = node_rect(group_after)
+    for other in document.nodes:
+        if other.get("type") != "group" or other["id"] == target_group["id"]:
+            continue
+        other_rect = node_rect(other)
+        if grown.contains(other) or node_rect(target_group).contains(other):
+            continue
+        if rects_overlap(grown, other_rect) and not rects_overlap(node_rect(target_group), other_rect):
+            raise PlanError(
+                f"growing the target group to x={grown.right}, y={grown.bottom} would overlap the group "
+                f"{other.get('label') or other['id']!r} at x={other_rect.x}..{other_rect.right}, "
+                f"y={other_rect.y}..{other_rect.bottom}; move the cards to a column that fits"
+            )
+    return _node_operation(document, group_after)
+
+
+def _appendix_group_id(
+    document: CanvasDocument, target_group: dict[str, Any], label: str | None
+) -> str:
+    existing = research_flow_appendix_group(document, target_group)
+    if existing:
+        return existing["id"]
+    if not isinstance(label, str) or not RESEARCH_FLOW_APPENDIX_LABEL.search(label):
+        raise PlanError(
+            "this flow has no appendix sub-group yet, so the first appendix card must "
+            "name one: pass \"appendix_label\" containing the word Appendix"
+        )
+    return deterministic_id(target_group["id"], "research_flow_appendix", label)
+
+
+def _refit_appendix_group(
+    document: CanvasDocument,
+    target_group: dict[str, Any],
+    new_member_ids: list[str],
+    label: str | None,
+    *,
+    padding: int = 20,
+) -> dict[str, Any] | None:
+    """Create or widen the appendix sub-group so it holds every appendix card.
+
+    The group is the record of which stream a card is in, so it has to bound them
+    all -- and only them. A main-stream card caught inside its rect would read as
+    appendix, so that is refused rather than quietly reclassified.
+    """
+    existing = research_flow_appendix_group(document, target_group)
+    group_id = _appendix_group_id(document, target_group, label)
+    members = [document.node(node_id) for node_id in new_member_ids]
+    if existing:
+        members.extend(
+            node
+            for node in document.nodes
+            if node.get("type") != "group"
+            and node["id"] not in set(new_member_ids)
+            and node_rect(existing).contains(node)
+        )
+    padded = bounding_rect(members, padding)
+    # The padding is breathing room, not a claim on space outside the flow: a card
+    # sitting on the flow group's own top or left edge would otherwise push the
+    # sub-group past that origin. The far edges need no clamp -- the flow group
+    # grows to hold the sub-group, as it does for any card placed past its edge.
+    parent = node_rect(target_group)
+    rect = Rect(
+        max(padded.x, parent.x),
+        max(padded.y, parent.y),
+        padded.right - max(padded.x, parent.x),
+        padded.bottom - max(padded.y, parent.y),
+    )
+    after = copy.deepcopy(existing) if existing else {"id": group_id, "type": "group", "label": label}
+    after.update({"x": rect.x, "y": rect.y, "width": rect.width, "height": rect.height})
+    intruders = sorted(
+        node["id"]
+        for node in document.nodes
+        if node.get("type") != "group"
+        and node["id"] not in {member["id"] for member in members}
+        and rect.contains(node)
+    )
+    if intruders:
+        raise PlanError(
+            f"main-stream cards would fall inside the appendix sub-group: {intruders}; "
+            "place appendix cards in their own column"
+        )
+    return _node_operation(document, after)
 
 
 def _compile_edit_text(
@@ -1586,6 +1793,113 @@ def _compile_edit_text(
     group_after = copy.deepcopy(scratch.node(target_group["id"]))
     group_after["height"] = max(group_after["height"], max(node["y"] + node["height"] for node in managed) - group_after["y"] + 20)
     _append_operation(scratch, operations, _node_operation(scratch, group_after))
+    return operations
+
+
+def _compile_move_stream(
+    document: CanvasDocument,
+    action: dict[str, Any],
+    target_group: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Move existing cards between the main stream and the appendix.
+
+    Which evidence belongs in the body and which belongs behind it keeps changing
+    while a paper is written, and re-creating a card to move it loses its edges.
+    So the cards keep their ids and their y -- height is when in the argument they
+    arrived -- and only the column, the sub-group, and the edges around them move.
+    """
+    node_ids, stream = action.get("node_ids"), action.get("stream")
+    x = action.get("x")
+    if stream not in RESEARCH_FLOW_STREAMS:
+        raise PlanError(f"move_stream needs a stream of {list(RESEARCH_FLOW_STREAMS)}, got {stream!r}")
+    if not isinstance(node_ids, list) or not node_ids:
+        raise PlanError("move_stream needs a non-empty node_ids list")
+    if len(node_ids) != len(set(node_ids)):
+        raise PlanError("move_stream node_ids must be unique")
+    if not isinstance(x, int):
+        raise PlanError(f"move_stream needs the destination column as an integer x, got {x!r}")
+
+    target_rect = node_rect(target_group)
+    appendix_before = research_flow_appendix_group(document, target_group)
+    moving = []
+    for node_id in node_ids:
+        node = document.node_map().get(node_id)
+        if node is None:
+            raise PlanError(f"move_stream node {node_id!r} is not in this Canvas")
+        if node.get("type") == "group":
+            raise PlanError(f"move_stream cannot move the group {node_id!r}; move its cards")
+        if not target_rect.contains(node):
+            raise PlanError(f"move_stream node {node_id!r} is outside the target group")
+        moving.append(node)
+
+    scratch = CanvasDocument(copy.deepcopy(document.data))
+    operations: list[dict[str, Any]] = []
+    for node in moving:
+        after = {**copy.deepcopy(node), "x": x}
+        _require_inside_group_origin(after, target_rect, f"move_stream node {node['id']!r}")
+        _append_operation(scratch, operations, _node_operation(scratch, after, target_group_id=target_group["id"]))
+
+    moved_ids = {node["id"] for node in moving}
+    if stream == "appendix":
+        members = sorted(moved_ids)
+    else:
+        members = sorted(
+            node["id"]
+            for node in scratch.nodes
+            if node.get("type") != "group"
+            and node["id"] not in moved_ids
+            and appendix_before
+            and node_rect(appendix_before).contains(node)
+        )
+    if members:
+        _append_operation(
+            scratch,
+            operations,
+            _refit_appendix_group(scratch, target_group, members, action.get("appendix_label")),
+        )
+    elif appendix_before:
+        # The last appendix card came back to the main stream, so the sub-group has
+        # nothing left to hold. An empty rect would still classify whatever drifts
+        # into it, so it goes rather than lingering.
+        operations.append({
+            "op": "remove_node",
+            "node_id": appendix_before["id"],
+            "before": copy.deepcopy(appendix_before),
+        })
+        scratch.data["nodes"] = [node for node in scratch.nodes if node["id"] != appendix_before["id"]]
+
+    appendix_after = research_flow_appendix_group(scratch, target_group)
+    for edge in document.edges:
+        if edge["fromNode"] not in moved_ids and edge["toNode"] not in moved_ids:
+            continue
+        from_node, to_node = scratch.node(edge["fromNode"]), scratch.node(edge["toNode"])
+        from_stream = research_flow_stream(scratch, from_node, appendix_after)
+        to_stream = research_flow_stream(scratch, to_node, appendix_after)
+        if RESEARCH_FLOW_STREAM_EDGE_COLOR.get((from_stream, to_stream)) is None:
+            from_node, to_node = to_node, from_node
+            from_stream, to_stream = to_stream, from_stream
+        from_side, to_side = dominant_reference_sides(from_node, to_node)
+        after = {
+            **copy.deepcopy(edge),
+            "fromNode": from_node["id"],
+            "fromSide": from_side,
+            "toNode": to_node["id"],
+            "toSide": to_side,
+            "color": RESEARCH_FLOW_STREAM_EDGE_COLOR[(from_stream, to_stream)],
+        }
+        if after != edge:
+            operations.append({
+                "op": "upsert_edge",
+                "edge_id": edge["id"],
+                "before": copy.deepcopy(edge),
+                "after": after,
+            })
+    if not operations:
+        return operations
+    managed = [scratch.node(node_id) for node_id in moved_ids]
+    if appendix_after:
+        managed.append(appendix_after)
+    _append_operation(scratch, operations, _grow_group_around(scratch, target_group, managed))
     return operations
 
 
@@ -1826,6 +2140,7 @@ REQUEST_COMPILERS: dict[
     "mapping_master": _compile_mapping_master,
     "remove_items": _compile_remove_items,
     "edit_text": _compile_edit_text,
+    "move_stream": _compile_move_stream,
     "layout_rebuttal": _compile_layout_rebuttal,
     "add_research_flow": _compile_add_research_flow,
     "build_camera_ready": _compile_build_camera_ready,
@@ -1849,7 +2164,7 @@ WORKFLOW_ACTIONS = {
     "camera-ready-mapping": {"map_issue", "mapping_master", "remove_items"},
     "camera-ready": {"build_camera_ready"},
     "rebuttal": {"layout_rebuttal"},
-    "research-flow": {"add_research_flow", "link_literature", "remove_items", "edit_text"},
+    "research-flow": {"add_research_flow", "link_literature", "remove_items", "edit_text", "move_stream"},
 }
 
 
