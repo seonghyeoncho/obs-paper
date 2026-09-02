@@ -25,9 +25,37 @@ class ZoteroError(RuntimeError):
     """Zotero or Better BibTeX did not provide a usable response."""
 
 
+LOCAL_BASE = "http://127.0.0.1:23119/api"
+WEB_BASE = "https://api.zotero.org"
+
+
 class ZoteroClient:
-    def __init__(self, base_url: str = "http://127.0.0.1:23119/api") -> None:
-        self.base_url = base_url.rstrip("/")
+    """Reads and writes a Zotero library over the desktop Local API or zotero.org.
+
+    Web mode is selected by ZOTERO_USER_ID and ZOTERO_API_KEY, so a machine without
+    Zotero Desktop -- a remote server -- can still read the library and export BibTeX.
+    Storing and reading PDF files stays local, because only the desktop keeps them.
+    """
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        *,
+        user_id: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
+        self.user_id = user_id or os.environ.get("ZOTERO_USER_ID") or ""
+        self.api_key = api_key or os.environ.get("ZOTERO_API_KEY") or ""
+        self.web = bool(self.user_id and self.api_key)
+        self.base_url = (base_url or (WEB_BASE if self.web else LOCAL_BASE)).rstrip("/")
+        self.library = f"users/{self.user_id}" if self.web else "users/0"
+
+    def _local_only(self, what: str) -> None:
+        if self.web:
+            raise ZoteroError(
+                f"{what} needs Zotero Desktop and its stored files; run it on the machine "
+                "running Zotero, not in ZOTERO_API_KEY web mode"
+            )
 
     def _request(
         self,
@@ -45,7 +73,12 @@ class ZoteroClient:
             f"{self.base_url}/{path.lstrip('/')}",
             data=data,
             method=method,
-            headers={"Accept": "application/json", "Content-Type": default_content_type, **(headers or {})},
+            headers={
+                "Accept": "application/json",
+                "Content-Type": default_content_type,
+                **({"Zotero-API-Key": self.api_key} if self.web else {}),
+                **(headers or {}),
+            },
         )
         try:
             with urlopen(request, timeout=timeout) as response:
@@ -56,14 +89,33 @@ class ZoteroClient:
             detail = exc.read().decode("utf-8", errors="replace")
             raise ZoteroError(f"Zotero HTTP {exc.code}: {detail or exc.reason}") from exc
         except URLError as exc:
-            raise ZoteroError("Zotero is not reachable; start Zotero and enable its Local API") from exc
+            unreachable = (
+                "zotero.org is not reachable"
+                if self.web
+                else "Zotero is not reachable; start Zotero and enable its Local API"
+            )
+            raise ZoteroError(unreachable) from exc
 
     def status(self) -> dict[str, Any]:
+        if self.web:
+            payload, _ = self._request("keys/current")
+            access = payload.get("access", {}).get("user", {}) if isinstance(payload, dict) else {}
+            return {
+                "status": "ok",
+                "mode": "web",
+                "user_id": str(payload.get("userID", self.user_id)),
+                "username": payload.get("username"),
+                "api_version": "3",
+                "library_read": bool(access.get("library")),
+                "library_write": bool(access.get("write")),
+                "files": bool(access.get("files")),
+            }
         _, headers = self._request("", text=True)
         normalized = {key.lower(): value for key, value in headers.items()}
         server_id = normalized.get("zotero-server-id")
         return {
             "status": "ok",
+            "mode": "local",
             "zotero_version": normalized.get("x-zotero-version"),
             "server_id": server_id,
             "api_version": normalized.get("zotero-api-version"),
@@ -72,7 +124,7 @@ class ZoteroClient:
 
     def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         params = urlencode({"q": query, "qmode": "everything", "format": "json", "limit": limit})
-        payload, _ = self._request(f"users/0/items/top?{params}")
+        payload, _ = self._request(f"{self.library}/items/top?{params}")
         if not isinstance(payload, list):
             raise ZoteroError("Zotero search returned an unexpected response")
         return [
@@ -87,6 +139,8 @@ class ZoteroClient:
         ]
 
     def _bbt_rpc(self, method: str, params: list[Any]) -> Any:
+        if self.web:
+            raise ZoteroError("Better BibTeX is a Zotero Desktop plugin and has no web endpoint")
         request = Request(
             "http://localhost:23119/better-bibtex/json-rpc",
             data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode("utf-8"),
@@ -108,7 +162,7 @@ class ZoteroClient:
             citekey = next(iter(keys.values())) if isinstance(keys, dict) and keys else None
             source = "better-bibtex"
         except ZoteroError:
-            raw, _ = self._request(f"users/0/items/{quote(item_key)}?format=bibtex", text=True)
+            raw, _ = self._request(f"{self.library}/items/{quote(item_key)}?format=bibtex", text=True)
             match = re.search(r"@[A-Za-z]+\s*\{\s*([^,\s]+)", raw)
             citekey = match.group(1) if match else None
             source = "zotero-bibtex"
@@ -122,7 +176,15 @@ class ZoteroClient:
             "source": source,
         }
 
+    def _write_headers(self, api_key: str | None = None) -> dict[str, str]:
+        if self.web:
+            return {}
+        key = api_key or os.environ.get("ZOTERO_LOCAL_API_KEY") or self.authorize()
+        return {"Zotero-API-Key": key, "Zotero-Server-ID": self.status()["server_id"]}
+
     def authorize(self, app_name: str = "Obs Paper") -> str:
+        if self.web:
+            return self.api_key
         status = self.status()
         server_id = status.get("server_id")
         if not server_id:
@@ -151,13 +213,11 @@ class ZoteroClient:
         item.setdefault("creators", [])
         item.setdefault("tags", [])
         item.setdefault("collections", [])
-        key = api_key or os.environ.get("ZOTERO_LOCAL_API_KEY") or self.authorize()
-        status = self.status()
         payload, _ = self._request(
-            "users/0/items",
+            f"{self.library}/items",
             method="POST",
             body=[item],
-            headers={"Zotero-API-Key": key, "Zotero-Server-ID": status["server_id"]},
+            headers=self._write_headers(api_key),
         )
         successful = payload.get("successful", {}) if isinstance(payload, dict) else {}
         created = successful.get("0") or successful.get(0)
@@ -167,7 +227,7 @@ class ZoteroClient:
         return item_key
 
     def collections(self) -> list[dict[str, Any]]:
-        payload, _ = self._request("users/0/collections?limit=100")
+        payload, _ = self._request(f"{self.library}/collections?limit=100")
         if not isinstance(payload, list):
             raise ZoteroError("Zotero collections returned an unexpected response")
         return payload
@@ -186,13 +246,11 @@ class ZoteroClient:
             if not collection_key:
                 raise ZoteroError(f"Zotero collection {name!r} has no key")
             return str(collection_key)
-        key = os.environ.get("ZOTERO_LOCAL_API_KEY") or self.authorize()
-        status = self.status()
         payload, _ = self._request(
-            "users/0/collections",
+            f"{self.library}/collections",
             method="POST",
             body=[{"name": name, "parentCollection": False}],
-            headers={"Zotero-API-Key": key, "Zotero-Server-ID": status["server_id"]},
+            headers=self._write_headers(),
         )
         created = payload.get("successful", {}).get("0", {}) if isinstance(payload, dict) else {}
         collection_key = created.get("key")
@@ -201,20 +259,18 @@ class ZoteroClient:
         return collection_key
 
     def add_item_to_collection(self, item_key: str, collection_key: str) -> None:
-        item, _ = self._request(f"users/0/items/{quote(item_key)}")
+        item, _ = self._request(f"{self.library}/items/{quote(item_key)}")
         data = item.get("data", {}) if isinstance(item, dict) else {}
         collections = list(data.get("collections", []))
         if collection_key in collections:
             return
         collections.append(collection_key)
-        key = os.environ.get("ZOTERO_LOCAL_API_KEY") or self.authorize()
-        status = self.status()
-        headers = {"Zotero-API-Key": key, "Zotero-Server-ID": status["server_id"]}
+        headers = self._write_headers()
         version = item.get("version") or data.get("version")
         if version is not None:
             headers["If-Unmodified-Since-Version"] = str(version)
         self._request(
-            f"users/0/items/{quote(item_key)}",
+            f"{self.library}/items/{quote(item_key)}",
             method="PATCH",
             body={"collections": collections},
             headers=headers,
@@ -225,7 +281,7 @@ class ZoteroClient:
         start = 0
         while True:
             raw, headers = self._request(
-                f"users/0/collections/{quote(collection_key)}/items/top?format=bibtex&limit=100&start={start}",
+                f"{self.library}/collections/{quote(collection_key)}/items/top?format=bibtex&limit=100&start={start}",
                 text=True,
             )
             chunks.append(raw)
@@ -235,13 +291,14 @@ class ZoteroClient:
                 return "\n".join(chunk.rstrip() for chunk in chunks if chunk).rstrip() + ("\n" if any(chunks) else "")
 
     def attachment_path(self, item_key: str) -> Path:
-        children, _ = self._request(f"users/0/items/{quote(item_key)}/children")
+        self._local_only("Reading a stored PDF")
+        children, _ = self._request(f"{self.library}/items/{quote(item_key)}/children")
         for child in children if isinstance(children, list) else []:
             data = child.get("data", {})
             if data.get("itemType") != "attachment" or data.get("contentType") != "application/pdf":
                 continue
             child_key = child.get("key") or data.get("key")
-            value, _ = self._request(f"users/0/items/{quote(child_key)}/file/view/url", text=True)
+            value, _ = self._request(f"{self.library}/items/{quote(child_key)}/file/view/url", text=True)
             parsed = urlparse(value.strip())
             path = Path(unquote(parsed.path)) if parsed.scheme == "file" else None
             if path and path.is_file():
@@ -249,6 +306,7 @@ class ZoteroClient:
         raise ZoteroError(f"Zotero item {item_key} has no readable PDF attachment")
 
     def import_pdf(self, item_key: str, source: Path, api_key: str | None = None) -> Path:
+        self._local_only("Storing a PDF")
         if not source.is_file() or source.suffix.lower() != ".pdf":
             raise ZoteroError(f"PDF does not exist: {source}")
         try:
@@ -260,11 +318,9 @@ class ZoteroClient:
                 raise ZoteroError(f"Zotero item {item_key} already has a different PDF attachment")
             return existing
 
-        key = api_key or os.environ.get("ZOTERO_LOCAL_API_KEY") or self.authorize()
-        status = self.status()
-        write_headers = {"Zotero-API-Key": key, "Zotero-Server-ID": status["server_id"]}
+        write_headers = self._write_headers(api_key)
         payload, _ = self._request(
-            "users/0/items",
+            f"{self.library}/items",
             method="POST",
             body=[{
                 "itemType": "attachment",
@@ -285,7 +341,7 @@ class ZoteroClient:
         if not attachment_key:
             raise ZoteroError(f"Zotero did not create the PDF attachment item: {payload}")
 
-        endpoint = f"users/0/items/{quote(attachment_key)}/file"
+        endpoint = f"{self.library}/items/{quote(attachment_key)}/file"
         condition = {"If-None-Match": "*"}
         upload_request = urlencode({
             "md5": _file_md5(source),
@@ -531,7 +587,7 @@ def _emit(value: Any) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-url", default="http://127.0.0.1:23119/api")
+    parser.add_argument("--base-url", help="override the Local API or zotero.org base URL")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status")
     search = commands.add_parser("search")
