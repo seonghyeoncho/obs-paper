@@ -1414,3 +1414,186 @@ class ResearchFlowMaintenanceTest(unittest.TestCase):
             with self.assertRaises(PlanError) as raised:
                 compile_document(self.canvas(), self.request({"op": "edit_text", "nodes": [spec]}), document_id="t")
             self.assertIn(expected, str(raised.exception))
+
+
+class ResearchFlowStreamTest(unittest.TestCase):
+    FLOW = {"id": "g", "type": "group", "label": "flow", "x": 0, "y": 0, "width": 5000, "height": 3000}
+
+    def request(self, *actions: dict[str, object]) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "workflow": "research-flow",
+            "target": {"group_label": "flow"},
+            "actions": list(actions),
+        }
+
+    def compile(self, *actions: dict[str, object]) -> dict[str, object]:
+        canvas = {"nodes": [dict(self.FLOW)], "edges": []}
+        return compile_document(canvas, self.request(*actions), document_id="t")
+
+    def add(self, **fields: object) -> dict[str, object]:
+        return {"op": "add_research_flow", "appendix_label": "Appendix (Phase 1)", **fields}
+
+    def edges(self, patch: dict[str, object]) -> list[dict[str, object]]:
+        return [op["after"] for op in patch["operations"] if op["op"] == "upsert_edge"]
+
+    def test_edge_colour_says_which_streams_it_joins(self) -> None:
+        for from_stream, to_stream, expected in (
+            ("main", "main", "4"),
+            ("appendix", "main", "#8a96a1"),
+            ("appendix", "appendix", "#c9d2da"),
+        ):
+            patch = self.compile(self.add(
+                nodes=[
+                    {"key": "a", "kind": "experiment", "text": "먼저", "x": 2900 if from_stream == "appendix" else 0,
+                     "y": 0, "stream": from_stream},
+                    {"key": "b", "kind": "answer", "text": "다음", "x": 2900 if to_stream == "appendix" else 0,
+                     "y": 900, "stream": to_stream},
+                ],
+                links=[["a", "b"]],
+            ))
+            self.assertEqual(self.edges(patch)[0]["color"], expected, (from_stream, to_stream))
+
+    def test_the_main_stream_never_points_into_the_appendix(self) -> None:
+        with self.assertRaises(PlanError) as raised:
+            self.compile(self.add(
+                nodes=[
+                    {"key": "m", "kind": "rq", "text": "본 질문", "x": 0, "y": 0},
+                    {"key": "a", "kind": "experiment", "text": "부록", "x": 2900, "y": 400, "stream": "appendix"},
+                ],
+                links=[["m", "a"]],
+            ))
+        self.assertIn("appendix evidence points into the main stream", str(raised.exception))
+
+    def test_the_appendix_group_is_made_around_its_cards(self) -> None:
+        patch = self.compile(self.add(
+            nodes=[
+                {"key": "a1", "kind": "experiment", "text": "위", "x": 2900, "y": 400, "stream": "appendix"},
+                {"key": "a2", "kind": "answer", "text": "아래", "x": 2900, "y": 900, "stream": "appendix"},
+            ],
+            links=[["a1", "a2"]],
+        ))
+        group = next(op["after"] for op in patch["operations"] if op["op"] == "upsert_group" and op["node_id"] != "g")
+        self.assertEqual(group["label"], "Appendix (Phase 1)")
+        self.assertEqual((group["x"], group["y"]), (2880, 380))
+
+    def test_the_first_appendix_card_must_name_the_group(self) -> None:
+        with self.assertRaises(PlanError) as raised:
+            self.compile({
+                "op": "add_research_flow",
+                "nodes": [{"key": "a", "kind": "experiment", "text": "부록", "x": 2900, "y": 0, "stream": "appendix"}],
+                "links": [],
+            })
+        self.assertIn("appendix_label", str(raised.exception))
+
+    def test_a_main_card_inside_the_appendix_rect_is_refused(self) -> None:
+        with self.assertRaises(PlanError) as raised:
+            self.compile(self.add(
+                nodes=[
+                    {"key": "a1", "kind": "experiment", "text": "위", "x": 2900, "y": 0, "stream": "appendix"},
+                    {"key": "a2", "kind": "experiment", "text": "아래", "x": 2900, "y": 600, "stream": "appendix"},
+                    {"key": "m", "kind": "rq", "text": "본류", "x": 2900, "y": 300},
+                ],
+                links=[],
+            ))
+        self.assertIn("main-stream cards would fall inside", str(raised.exception))
+
+    def test_an_unknown_stream_is_refused(self) -> None:
+        with self.assertRaises(PlanError) as raised:
+            self.compile(self.add(
+                nodes=[{"key": "a", "kind": "rq", "text": "x", "x": 0, "y": 0, "stream": "sidebar"}],
+                links=[],
+            ))
+        self.assertIn("'sidebar'", str(raised.exception))
+
+    def build_flow(self, canvas: Path) -> dict[str, str]:
+        canvas.write_text(json.dumps({"nodes": [dict(self.FLOW)], "edges": []}), encoding="utf-8")
+        request = self.request({
+            "op": "add_research_flow",
+            "nodes": [
+                {"key": "rq1", "kind": "rq", "text": "본 질문", "x": 0, "y": 0},
+                {"key": "e_alt", "kind": "experiment", "text": "대안 실험", "x": 0, "y": 400},
+                {"key": "a_alt", "kind": "answer", "text": "대안은 안 됨", "x": 0, "y": 800},
+            ],
+            "links": [["rq1", "e_alt"], ["e_alt", "a_alt"]],
+        })
+        apply_patch(canvas, compile_request(canvas, request))
+        nodes = json.loads(canvas.read_text())["nodes"]
+        return {
+            node["text"].split("\n")[0]: node["id"]
+            for node in nodes
+            if node.get("type") == "text"
+        }
+
+    def test_move_stream_keeps_y_and_repairs_the_edges(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = Path(directory) / "flow.canvas"
+            ids = self.build_flow(canvas)
+            move = self.request({
+                "op": "move_stream",
+                "stream": "appendix",
+                "x": 2900,
+                "appendix_label": "Appendix (Phase 1)",
+                "node_ids": [ids["# 대안 실험"], ids["# 대안은 안 됨"]],
+            })
+            apply_patch(canvas, compile_request(canvas, move))
+            data = json.loads(canvas.read_text())
+            moved = {node["id"]: node for node in data["nodes"]}
+            self.assertEqual((moved[ids["# 대안 실험"]]["x"], moved[ids["# 대안 실험"]]["y"]), (2900, 400))
+            self.assertEqual((moved[ids["# 대안은 안 됨"]]["x"], moved[ids["# 대안은 안 됨"]]["y"]), (2900, 800))
+            # the edge that ran main -> appendix is turned around, not left broken
+            crossing = next(
+                edge for edge in data["edges"] if ids["# 본 질문"] in (edge["fromNode"], edge["toNode"])
+            )
+            self.assertEqual(crossing["fromNode"], ids["# 대안 실험"])
+            self.assertEqual(crossing["toNode"], ids["# 본 질문"])
+            self.assertEqual(crossing["color"], "#8a96a1")
+            inside = next(edge for edge in data["edges"] if edge["id"] != crossing["id"])
+            self.assertEqual(inside["color"], "#c9d2da")
+            self.assertEqual(compile_request(canvas, move)["operations"], [])
+
+    def test_the_appendix_group_goes_when_its_last_card_leaves(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = Path(directory) / "flow.canvas"
+            ids = self.build_flow(canvas)
+            out = self.request({
+                "op": "move_stream",
+                "stream": "appendix",
+                "x": 2900,
+                "appendix_label": "Appendix (Phase 1)",
+                "node_ids": [ids["# 대안 실험"], ids["# 대안은 안 됨"]],
+            })
+            apply_patch(canvas, compile_request(canvas, out))
+            back = self.request({
+                "op": "move_stream",
+                "stream": "main",
+                "x": 0,
+                "node_ids": [ids["# 대안 실험"], ids["# 대안은 안 됨"]],
+            })
+            apply_patch(canvas, compile_request(canvas, back))
+            data = json.loads(canvas.read_text())
+            self.assertEqual([node for node in data["nodes"] if node.get("label", "").startswith("Appendix")], [])
+            self.assertEqual({edge["color"] for edge in data["edges"]}, {"4"})
+            self.assertEqual(compile_request(canvas, back)["operations"], [])
+
+    def test_move_stream_refuses_a_group_and_an_unknown_node(self) -> None:
+        for node_id, expected in (("g", "move its cards"), ("nope", "not in this Canvas")):
+            with self.assertRaises(PlanError) as raised:
+                self.compile({"op": "move_stream", "stream": "appendix", "x": 2900, "node_ids": [node_id]})
+            self.assertIn(expected, str(raised.exception))
+
+    def test_growing_the_flow_group_stops_at_a_neighbouring_group(self) -> None:
+        canvas = {
+            "nodes": [
+                {"id": "g", "type": "group", "label": "flow", "x": 0, "y": 0, "width": 1000, "height": 1000},
+                {"id": "p", "type": "group", "label": "paper_v1", "x": 1400, "y": 0, "width": 2000, "height": 1000},
+            ],
+            "edges": [],
+        }
+        request = self.request(self.add(
+            nodes=[{"key": "a", "kind": "log", "text": "폐기", "x": 900, "y": 0, "stream": "appendix"}],
+            links=[],
+        ))
+        with self.assertRaises(PlanError) as raised:
+            compile_document(canvas, request, document_id="t")
+        self.assertIn("'paper_v1'", str(raised.exception))
