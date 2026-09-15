@@ -103,4 +103,30 @@ A manuscript `heading` block also takes `level` of `section`, `subsection`, or `
 
 ## Safe execution
 
-Run `inspect`, `plan`, review the patch, `apply --log CANVAS_ACTION_LOG.md`, `validate`, and a second `plan`. The second plan must contain an empty `operations` list before the next workflow stage mutates that stage's inputs.
+Run `inspect`, `plan`, review the patch, `apply --log CANVAS_ACTION_LOG.md`, `validate`, `layout-check`, and a second `plan`. The second plan must contain an empty `operations` list before the next workflow stage mutates that stage's inputs.
+
+## Layout check
+
+`validate` answers whether the file is sound: it parses, ids are unique, edges have both ends. It does not look at the layout, so a card that has slipped out of its group or a title card nine hundred pixels tall passes. It does count layout findings under `layout` (`errors`, `warnings`), and it still reports `valid` whatever that count is.
+
+```bash
+python plugins/obspaper/scripts/obs_paper.py layout-check flow.canvas [--group-id ID | --group-label LABEL] [--output report.json]
+python plugins/obspaper/scripts/obs_paper.py layout-render flow.canvas --output layout.svg [--group-id ID | --group-label LABEL]
+```
+
+`layout-check` reads geometry and writes nothing. It prints `status` (`clean`, `warnings`, or `errors`), the two counts, the tolerances it used, and a list of `findings`. Each finding has `kind`, `severity`, `node_ids`, `labels` in the same order, a one-line `message`, and the measured numbers under `details`. It exits 1 when there is at least one error, so a script can stop on it; warnings alone exit 0.
+
+Errors are geometry Obsidian misreads, because it decides group membership from rectangles:
+
+- `straddles_group`: a card lies partly inside a group. `details.outside` says by how much it crosses each edge. This is what a phase group that did not grow with its cards looks like.
+- `group_overlap`: two groups overlap and neither holds the other, so the cards in the shared area belong to both.
+- `card_overlap`: two cards overlap. Cards that only touch are fine.
+
+Warnings are estimates, and worth a look rather than a stop:
+
+- `card_height`: a text card's height is off from `estimate_text_height` by more than the tolerance. Prose allows the larger of 40px and 15% of the estimate: the estimate lands within a pixel on measured cards, but one misjudged wrap moves it by a 27px line. A card holding a Markdown table or a `$$` equation allows the larger of 120px and 50%, since Obsidian sizes table columns to their content and the estimate for those is approximate. Rebuttal rows are deliberately sized to their tallest card plus 80px and mapping cards use their own formula, so expect these warnings there; scope the check to the group you changed.
+- `group_padding`: one side of a group is more than 400px emptier than every other side, measured to the group's direct children -- a sub-group counts as one child, not its cards.
+
+`--height-tolerance`, `--table-height-tolerance`, and `--padding-slack` override the pixel values. With `--group-id` or `--group-label` only findings that involve that group, a card or group overlapping it, are kept; a group that holds the scoped group is context and does not bring its own findings along.
+
+`layout-render` draws the same Canvas, or one group of it, as an SVG that any browser opens. Groups are labelled outlines and cards are rectangles in their Obsidian colour; a node named in an error is outlined in red, one named in a warning in dashed orange, and the overlap of two cards is filled red. Hovering a shape shows its id and its findings. It writes the file, prints the counts, and exits 1 on errors as `layout-check` does.

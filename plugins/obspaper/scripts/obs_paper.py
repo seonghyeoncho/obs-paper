@@ -5,15 +5,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 from obs_paper_engine import (
+    LAYOUT_HEIGHT_TOLERANCE,
+    LAYOUT_PADDING_SLACK,
+    LAYOUT_TABLE_HEIGHT_TOLERANCE,
     PlanError,
     PreconditionError,
     apply_patch,
     compile_request,
     inspect_canvas,
+    layout_check,
+    layout_render,
     read_nodes,
     validate_canvas,
 )
@@ -73,6 +79,18 @@ def main() -> None:
     validate_parser = subparsers.add_parser("validate")
     validate_parser.add_argument("canvas", type=Path)
 
+    layout_check_parser = subparsers.add_parser("layout-check")
+    layout_render_parser = subparsers.add_parser("layout-render")
+    for layout_parser in (layout_check_parser, layout_render_parser):
+        layout_parser.add_argument("canvas", type=Path)
+        layout_parser.add_argument("--group-id")
+        layout_parser.add_argument("--group-label")
+        layout_parser.add_argument("--height-tolerance", type=int, default=LAYOUT_HEIGHT_TOLERANCE)
+        layout_parser.add_argument("--table-height-tolerance", type=int, default=LAYOUT_TABLE_HEIGHT_TOLERANCE)
+        layout_parser.add_argument("--padding-slack", type=int, default=LAYOUT_PADDING_SLACK)
+    layout_check_parser.add_argument("--output", type=Path)
+    layout_render_parser.add_argument("--output", type=Path, required=True)
+
     init_parser = subparsers.add_parser("project-init")
     init_parser.add_argument("vault", type=Path)
     init_parser.add_argument("name")
@@ -117,12 +135,26 @@ def main() -> None:
 
     args = parser.parse_args()
     try:
+        target = None
+        if getattr(args, "group_id", None) or getattr(args, "group_label", None):
+            target = {"group_id": args.group_id, "group_label": args.group_label}
+            target = {key: value for key, value in target.items() if value}
         if args.command == "inspect":
-            target = None
-            if args.group_id or args.group_label:
-                target = {"group_id": args.group_id, "group_label": args.group_label}
-                target = {key: value for key, value in target.items() if value}
             emit(inspect_canvas(args.canvas, target), args.output)
+        elif args.command in ("layout-check", "layout-render"):
+            tolerances = {
+                "height_tolerance": args.height_tolerance,
+                "table_height_tolerance": args.table_height_tolerance,
+                "padding_slack": args.padding_slack,
+            }
+            if args.command == "layout-check":
+                report = layout_check(args.canvas, target, **tolerances)
+                emit(report, args.output)
+            else:
+                report = layout_render(args.canvas, args.output, target, **tolerances)
+                emit(report)
+            if report["errors"]:
+                sys.exit(1)
         elif args.command == "plan":
             emit(compile_request(args.canvas, read_json(args.request)), args.output)
         elif args.command == "apply":
