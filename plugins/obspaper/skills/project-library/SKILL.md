@@ -31,7 +31,30 @@ python ../../scripts/obs_paper.py vault-path
 
 Never assume a vault name or path. `OBS_PAPER_VAULT` may temporarily override the saved path. On a desktop with no saved setting, `vault-path` may auto-detect only when the official Obsidian CLI reports exactly one vault. On a headless server, configure that server's local `obsidian-headless` Sync folder explicitly because headless Sync does not provide the desktop Obsidian CLI.
 
-The research repository remains separate. `project.md` records its path for the current host so the active project can be resolved without scanning unrelated Canvas files. Do not reuse a Mac absolute path on a remote server; cross-host project resolution requires an explicit current-host path until host-scoped repository metadata is implemented.
+## Host preflight and writer lease
+
+Run this first on any host, from inside the research repository:
+
+```bash
+python ../../scripts/obs_paper.py preflight
+```
+
+It says whether this device may write the project's Canvas now (`can_write`), what blocks it (`blocked_by`), and the next steps. Follow them rather than deciding a host's role yourself.
+
+- `no-vault`: the host has no vault. A server gets its own copy through `obsidian-headless`; the steps are under Server operation in [../../references/sync-topology.md](../../references/sync-topology.md). Propose the setup and install it only after the user approves. The user always runs `ob login`; never handle Obsidian account credentials.
+- `project-unmapped`: record the repository as described below.
+- `lease-required` or a free lease on a shared Canvas: `lease acquire <canvas> --purpose ...`, wait for Sync to upload `CANVAS_LEASE.md`, check `lease status`, then write, and `lease release` once Sync has uploaded the Canvas.
+- `lease-held-by-other`: wait for the expiry shown or ask the user. Never run `lease release --force` on another device's lease; that is the user's decision.
+
+`apply` enforces the lease. A project written from more than one host sets `canvas_lease: "required"` in `project.md`, so that `apply` without a lease is refused rather than warned about. Set the device name with `vault-config <path> --device <name>` to match `ob sync-setup --device-name`.
+
+The research repository remains separate. `project.md` records the repository path of each host that has a checkout, a string for one and a list for several, so the active project can be resolved without scanning unrelated Canvas files. Resolve it with `project-resolve <vault> --repository <repo>`. When that fails, the error lists every project and the repository it records. Ask the user which project the repository belongs to, then record the mapping once:
+
+```bash
+python ../../scripts/obs_paper.py project-resolve <vault> --name <project> --add-repository <repo>
+```
+
+This appends the path and keeps the paths other hosts recorded. `project-init`, `project-import`, and `project-standardize` with `--repository` do the same for an existing project. Do not guess a project from Canvas contents.
 
 ## Storage access preflight
 

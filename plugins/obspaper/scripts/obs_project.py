@@ -92,6 +92,11 @@ def init_project(vault: Path, name: str, repository: Path | None = None) -> dict
             set_frontmatter_value(metadata, "canvas", canvas.name)
         if not _frontmatter_value(metadata, "paper_flows"):
             set_frontmatter_value(metadata, "paper_flows", "Paper")
+        if repository:
+            # --repository on an existing project used to be dropped silently,
+            # which is how most projects came to have no repository at all.
+            if record_repository(vault, name, repository)["status"] == "recorded":
+                created.append(f"{metadata}#repository")
 
     for filename in ("references.bib", "searches.jsonl"):
         path = root / filename
@@ -135,14 +140,25 @@ def _valid_vault(path: Path) -> Path:
     return resolved
 
 
-def configure_vault(path: Path, name: str | None = None, config_path: Path | None = None) -> dict[str, str]:
-    """Persist this host's active vault path outside the synced vault."""
+def configure_vault(
+    path: Path, name: str | None = None, config_path: Path | None = None, device: str | None = None
+) -> dict[str, str]:
+    """Persist this host's active vault path, and its Sync device name, outside the synced vault."""
     vault = _valid_vault(path)
     destination = _vault_config_path(config_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     data = {"path": str(vault)}
     if name:
         data["name"] = name
+    previous: Any = None
+    if destination.is_file():
+        try:
+            previous = json.loads(destination.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            previous = None
+    kept = previous.get("device") if isinstance(previous, dict) else None
+    if device or isinstance(kept, str):
+        data["device"] = device or kept
     temporary = destination.with_suffix(destination.suffix + ".tmp")
     temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary.replace(destination)
@@ -165,6 +181,26 @@ def _saved_vault(config_path: Path | None = None) -> Path | None:
     return _valid_vault(Path(data["path"]))
 
 
+class VaultUnavailable(ProjectError):
+    """This host has no vault setting and no Obsidian CLI to discover one."""
+
+
+def _no_vault_message(name: str | None, executable: str, config_path: Path | None) -> str:
+    looked = (
+        f"{name!r} is not a vault directory"
+        if name
+        else f"no vault config at {_vault_config_path(config_path)} and OBS_PAPER_VAULT is unset"
+    )
+    return (
+        f"no vault on this host: {looked}, and there is no Obsidian CLI ({executable!r}) to discover one. "
+        "Installing the desktop CLI is not the fix. Either (a) give this host its own copy of the vault "
+        "with obsidian-headless, once the user approves and has run `ob login` themselves, then run "
+        "`obs_paper.py vault-config /absolute/path/to/headless-vault`; or (b) if a synced vault folder "
+        "already exists on this host, run `obs_paper.py vault-config /absolute/path/to/that-vault`. "
+        "Setup steps are in references/sync-topology.md under Server operation"
+    )
+
+
 def resolve_vault(name: str | None = None, executable: str = "obsidian", config_path: Path | None = None) -> Path:
     """Resolve an explicit vault, this host's config, or one registered desktop vault."""
     if name:
@@ -182,8 +218,14 @@ def resolve_vault(name: str | None = None, executable: str = "obsidian", config_
             capture_output=True,
             text=True,
         )
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise ProjectError(f"cannot query Obsidian CLI: {exc}") from exc
+    except OSError as exc:
+        # The CLI is the last fallback, not the fix. Naming it alone sends the
+        # reader off to install Obsidian on a host that should never hold the vault.
+        raise VaultUnavailable(_no_vault_message(name, executable, config_path)) from exc
+    except subprocess.CalledProcessError as exc:
+        raise ProjectError(
+            f"cannot query Obsidian CLI: {exc}; run vault-config /absolute/path/to/vault"
+        ) from exc
     registered = [(vault_name, Path(path)) for vault_name, path in (line.split("\t", 1) for line in result.stdout.splitlines() if "\t" in line)]
     matches = [path for vault_name, path in registered if vault_name == name] if name else [path for _, path in registered]
     if len(matches) != 1:
@@ -555,25 +597,116 @@ def build_paper_flow(project: Path, spec_path: Path, *, replace: bool = False) -
     }
 
 
-def resolve_project(vault: Path, *, name: str | None = None, repository: Path | None = None) -> dict[str, str]:
+def repository_paths(metadata: Path) -> list[str]:
+    """Every repository path a project records, one per host that has checked it out.
+
+    `repository` is a string on a project touched by one host and a list once a
+    second host records its own checkout; paths differ across hosts, so neither
+    host's path may replace the other's.
+    """
+    lines = metadata.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0] != "---":
+        return []
+    for line in lines[1:]:
+        if line == "---":
+            break
+        if line.startswith("repository:"):
+            raw = line.split(":", 1)[1].strip()
+            try:
+                value = json.loads(raw)
+            except json.JSONDecodeError:
+                value = raw.strip("\"'")
+            values = value if isinstance(value, list) else [value]
+            return [item for item in values if isinstance(item, str) and item]
+    return []
+
+
+def local_repository(metadata: Path) -> str | None:
+    """The recorded repository that exists on this host, if exactly one does."""
+    present = [path for path in repository_paths(metadata) if Path(path).is_dir()]
+    return present[0] if len(present) == 1 else None
+
+
+def record_repository(vault: Path, name: str, repository: Path) -> dict[str, Any]:
+    """Add one host's repository path to a project without dropping another host's."""
+    root = project_root(vault, name)
+    metadata = root / "project.md"
+    if not metadata.is_file():
+        raise ProjectError(f"project does not exist: {root}")
+    wanted = str(repository.expanduser().resolve())
+    paths = repository_paths(metadata)
+    if wanted in paths:
+        return {"status": "exists", "project": root.name, "repositories": paths}
+    paths.append(wanted)
+    encoded = f"repository: {json.dumps(paths[0] if len(paths) == 1 else paths, ensure_ascii=False)}"
+    lines = metadata.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0] != "---":
+        raise ProjectError(f"missing YAML frontmatter: {metadata}")
+    for index, line in enumerate(lines[1:], start=1):
+        if line == "---":
+            lines.insert(index, encoded)
+            break
+        if line.startswith("repository:"):
+            lines[index] = encoded
+            break
+    else:
+        raise ProjectError(f"unterminated YAML frontmatter: {metadata}")
+    metadata.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    append_action(
+        root / "CANVAS_ACTION_LOG.md",
+        status="done",
+        action="record-repository",
+        target=str(metadata),
+        reason="Map a repository checkout to this project",
+        result=f"Recorded {wanted}",
+    )
+    return {"status": "recorded", "project": root.name, "repositories": paths}
+
+
+def resolve_project(vault: Path, *, name: str | None = None, repository: Path | None = None) -> dict[str, Any]:
     projects = vault.resolve() / "Projects"
     if name:
         root = project_root(vault, name)
         matches = [root] if (root / "project.md").is_file() else []
+        if not matches:
+            raise ProjectError(f"project does not exist: {root}")
     elif repository:
         wanted = str(repository.resolve())
-        matches = [
-            metadata.parent
-            for metadata in projects.glob("*/project.md")
-            if _frontmatter_value(metadata, "repository") == wanted
-        ]
+        candidates = sorted(projects.glob("*/project.md"))
+        matches = [metadata.parent for metadata in candidates if wanted in repository_paths(metadata)]
+        if not matches:
+            raise ProjectError(_unmapped_repository_message(vault, wanted, candidates))
     else:
         raise ProjectError("resolve needs a project name or repository")
     if len(matches) != 1:
-        raise ProjectError(f"project must resolve once ({len(matches)} matches)")
+        raise ProjectError(
+            f"project must resolve once ({len(matches)} matches): "
+            + ", ".join(repr(root.name) for root in matches)
+            + " all record this repository; remove it from every project.md but the right one"
+        )
     root = matches[0]
     canvas_name = _frontmatter_value(root / "project.md", "canvas") or f"{root.name}.canvas"
     canvas = root / canvas_name
     if not canvas.is_file():
         raise ProjectError(f"project Canvas does not exist: {canvas}")
-    return {"project": root.name, "root": str(root), "canvas": str(canvas)}
+    return {
+        "project": root.name,
+        "root": str(root),
+        "canvas": str(canvas),
+        "repositories": repository_paths(root / "project.md"),
+    }
+
+
+def _unmapped_repository_message(vault: Path, wanted: str, candidates: list[Path]) -> str:
+    listed = "; ".join(
+        f"{metadata.parent.name} (repository: {', '.join(repository_paths(metadata)) or 'unset'})"
+        for metadata in candidates
+    ) or "none"
+    return (
+        f"no project records repository {wanted!r}. Do not pick one by searching Canvas text: "
+        "a flow with similar RQ labels can belong to another project. "
+        f"Projects in {vault.resolve() / 'Projects'}: {listed}. "
+        "Ask which project this repository belongs to, then record it once with "
+        f"`obs_paper.py project-resolve {vault} --name <project> --add-repository {wanted}`"
+    )
+

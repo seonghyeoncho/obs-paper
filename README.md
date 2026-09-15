@@ -65,6 +65,9 @@ The plugin can initialize or import `<Vault>/Projects/<Project>/`, works with it
 ```bash
 python plugins/obspaper/scripts/obs_paper.py vault-config /path/to/vault --name "Research"
 python plugins/obspaper/scripts/obs_paper.py vault-path
+python plugins/obspaper/scripts/obs_paper.py preflight --repository /path/to/repo
+python plugins/obspaper/scripts/obs_paper.py lease acquire "/path/to/vault/Projects/My Project/My Project.canvas" --purpose "RQ2 cards"
+python plugins/obspaper/scripts/obs_paper.py project-resolve /path/to/vault --name "My Project" --add-repository /path/to/repo
 python plugins/obspaper/scripts/obs_paper.py project-init /path/to/vault "My Project" --repository /path/to/repo
 python plugins/obspaper/scripts/obs_paper.py project-import /path/to/vault "My Project" source.canvas --repository /path/to/repo
 python plugins/obspaper/scripts/obs_paper.py project-standardize /path/to/vault "My Project"
@@ -77,7 +80,7 @@ python plugins/obspaper/scripts/zotero_bridge.py audit "/path/to/vault/Projects/
 python plugins/obspaper/scripts/obs_paper.py paper-flow-build "/path/to/vault/Projects/My Project" paper-flow.json
 ```
 
-The configured path is stored per host in `~/.config/obs-paper/config.json`, outside Obsidian Sync. Set `OBS_PAPER_VAULT` to override it temporarily.
+The configured path is stored per host in `~/.config/obs-paper/config.json`, outside Obsidian Sync. Set `OBS_PAPER_VAULT` to override it temporarily. A server with the repository but no vault gets its own copy through `obsidian-headless`. Hosts take turns writing a Canvas under a lease kept in `CANVAS_LEASE.md` beside it, which `apply` enforces; `preflight` tells a host whether it may write now. See `plugins/obspaper/references/sync-topology.md`.
 
 Each project uses an exact-name Zotero Collection as its literature source of truth. Selected papers and their stored PDF attachments live in Zotero, vault-wide sentence-level paper Canvases live under `Paper/`, only the project Collection is exported to `references.bib`, and searches are appended to `searches.jsonl`. No paper PDF is copied into Obsidian. Export is blocked if it would remove a citation key already used by the project. The Zotero bridge uses the desktop Local API. Reads require no account API key; Zotero 10+ writes request approval in Zotero at runtime. Because that API answers on `localhost:23119` only, a machine without Zotero Desktop — a remote server — sets `ZOTERO_USER_ID` and `ZOTERO_API_KEY` to reach the library over zotero.org instead. Web mode searches, cites, and exports BibTeX; storing and reading PDFs stays on the desktop that holds the files. Better BibTeX is optional and preferred for stable LaTeX citation keys. External scholarly search remains separate from Zotero library search.
 
