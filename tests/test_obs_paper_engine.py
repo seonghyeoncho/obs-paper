@@ -1597,3 +1597,86 @@ class ResearchFlowStreamTest(unittest.TestCase):
         with self.assertRaises(PlanError) as raised:
             compile_document(canvas, request, document_id="t")
         self.assertIn("'paper_v1'", str(raised.exception))
+
+
+class VaultlessAddressingTest(unittest.TestCase):
+    def test_research_flow_ids_follow_the_documented_formula(self) -> None:
+        import hashlib
+
+        def formula(*parts: str) -> str:
+            return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:16]
+
+        canvas = {
+            "nodes": [{"id": "flowgroup", "type": "group", "x": 0, "y": 0, "width": 2000, "height": 2000, "label": "research_flow"}],
+            "edges": [],
+        }
+        request = {
+            "schema_version": 1,
+            "workflow": "research-flow",
+            "target": {"group_id": "flowgroup"},
+            "actions": [{
+                "op": "add_research_flow",
+                "nodes": [
+                    {"key": "rq1", "kind": "rq", "text": "RQ1", "x": 100, "y": 100},
+                    {"key": "e1", "kind": "experiment", "text": "E1", "x": 100, "y": 400,
+                     "sections": [{"key": "setup", "heading": "Setup", "text": "Grid."}]},
+                ],
+                "links": [["rq1", "e1"], ["e1:setup", "e1"]],
+            }],
+        }
+        operations = compile_document(canvas, request, document_id="t")["operations"]
+        node_ids = {operation["node_id"] for operation in operations if operation["op"] == "upsert_node"}
+        edge_ids = {operation["edge_id"] for operation in operations if operation["op"] == "upsert_edge"}
+        self.assertEqual(
+            node_ids,
+            {formula("flowgroup", "research_flow", "rq1"), formula("flowgroup", "research_flow", "e1"),
+             formula("flowgroup", "research_flow", "e1", "setup")},
+        )
+        self.assertIn(formula("flowgroup", "research_edge", "rq1", "e1"), edge_ids)
+        self.assertEqual(deterministic_id("flowgroup", "research_flow", "rq1"), formula("flowgroup", "research_flow", "rq1"))
+
+    def test_a_node_without_coordinates_is_refused_by_name(self) -> None:
+        canvas = {
+            "nodes": [{"id": "flowgroup", "type": "group", "x": 0, "y": 0, "width": 2000, "height": 2000, "label": "research_flow"}],
+            "edges": [],
+        }
+        request = {
+            "schema_version": 1,
+            "workflow": "research-flow",
+            "target": {"group_id": "flowgroup"},
+            "actions": [{"op": "add_research_flow", "nodes": [{"key": "rq9", "kind": "rq", "text": "RQ9"}], "links": []}],
+        }
+        with self.assertRaisesRegex(PlanError, r"'rq9' needs integer x, y.*x=None"):
+            compile_document(canvas, request, document_id="t")
+
+    def test_a_canvas_with_no_groups_says_so(self) -> None:
+        document = CanvasDocument({
+            "nodes": [{"id": "n", "type": "text", "x": 0, "y": 0, "width": 10, "height": 10, "text": "loose"}],
+            "edges": [],
+        })
+        with self.assertRaises(PlanError) as raised:
+            document.resolve_group({"group_label": "research_flow"})
+        message = str(raised.exception)
+        self.assertIn("group label must resolve once: 'research_flow' (0 matches)", message)
+        self.assertIn("no groups at all", message)
+        self.assertIn("Obsidian", message)
+
+    def test_an_unmatched_label_lists_the_nearest_ones(self) -> None:
+        group = {"type": "group", "x": 0, "y": 0, "width": 10, "height": 10}
+        document = CanvasDocument({
+            "nodes": [
+                {**group, "id": "g1", "label": "paper_v1"},
+                {**group, "id": "g2", "label": "Research Flow"},
+                {**group, "id": "g3", "label": "Rebuttal"},
+            ],
+            "edges": [],
+        })
+        with self.assertRaises(PlanError) as raised:
+            document.resolve_group({"group_label": "research_flow"})
+        self.assertIn("3 group(s), nearest labels: 'Research Flow'", str(raised.exception))
+
+    def test_a_duplicated_label_names_the_ids_to_use(self) -> None:
+        group = {"type": "group", "x": 0, "y": 0, "width": 10, "height": 10, "label": "OGen · Appendix A"}
+        document = CanvasDocument({"nodes": [{**group, "id": "v1"}, {**group, "id": "v2"}], "edges": []})
+        with self.assertRaisesRegex(PlanError, r"\(2 matches\); target it by group_id instead: v1, v2"):
+            document.resolve_group({"group_label": "OGen · Appendix A"})

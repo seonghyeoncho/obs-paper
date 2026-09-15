@@ -37,7 +37,7 @@ python obs_paper.py vault-path
 
 This writes `~/.config/obs-paper/config.json`, outside the vault. `OBS_PAPER_VAULT` overrides it for an ephemeral session. With no setting, desktop auto-discovery is allowed only when the official Obsidian CLI reports exactly one vault.
 
-Repository paths are host-specific. Never trust an absolute `repository` value written by another host. Project metadata and resolution must support a path for the current host before remote execution becomes automatic; until then, require an explicit project and repository path.
+Repository paths are host-specific. `repository` in `project.md` is a string when one host has recorded its checkout and a list once more than one has, and `project-resolve --repository` matches any entry. Record a checkout with `project-resolve <vault> --name <project> --add-repository <path>`; it appends and never replaces the path another host wrote. When a repository matches no project, the error lists every project and what it records. Ask which project it is. Never pick one by searching Canvas text: two flows can share RQ labels.
 
 ## Canvas writer rule
 
@@ -60,5 +60,17 @@ Do not rely on `merge` or conflict-file settings to reconcile concurrent Canvas 
 ## Server operation
 
 Use `obsidian-headless` only on the server-side local copy of the active vault. Do not run desktop Sync and Headless Sync against the same local folder on one device. Keep the server device name stable, run continuous sync when the server is expected to receive changes, and verify status before and after an agent writes Canvas.
+
+A server with the repository but no vault gets one this way, so an agent there can inspect and apply its own requests. The setup needs Node 22 or later:
+
+```bash
+npm install -g obsidian-headless
+ob login                                   # the user runs this
+ob sync-setup --device-name <stable-name>
+ob sync --continuous                       # without systemd, run it as a background process
+python obs_paper.py vault-config /absolute/path/to/local-vault
+```
+
+Approval boundary: an agent may propose this setup and, once the user approves, install `obsidian-headless` and run the other steps. `ob login` takes the Obsidian account credentials, so the user always runs it; an agent never asks for, reads, stores, or types them.
 
 Agent skills and executables live outside the vault and must be installed or updated separately on each server.

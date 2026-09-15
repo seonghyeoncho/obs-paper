@@ -14,7 +14,43 @@ Use one JSON object:
 Every action names itself under `op`. The action lists below are written as
 `op-name`: required fields; optional ones follow a semicolon.
 
-`target` contains exactly one of `group_id` or `group_label`. Resolve IDs with `inspect`. Stable `key` values produce deterministic IDs.
+`target` contains exactly one of `group_id` or `group_label`. Resolve IDs with `inspect`. Stable `key` values produce deterministic IDs; see Deterministic IDs below. A label that matches no group names the nearest existing labels, or says the Canvas has no groups at all. No request can create its own target group, so on a Canvas of loose cards create the group in Obsidian first.
+
+## Deterministic IDs
+
+Every id the engine derives is
+
+```text
+deterministic_id(part1, part2, ...) = sha256(utf8(part1 + "\0" + part2 + "\0" + ...)).hexdigest()[:16]
+```
+
+that is, the first 16 lowercase hex characters of SHA-256 over the parts joined by a NUL byte. `obs_paper.py node-id <part> <part> ...` prints it without reading any Canvas. `G` below is the target group's id, which `inspect` lists; an id cannot be computed from a `group_label`. An explicit `node_id` or `group_id` on a spec wins over the derived one.
+
+| Item | Parts |
+|---|---|
+| research-flow card | `G`, `research_flow`, node `key` |
+| experiment section card | `G`, `research_flow`, experiment `key`, section `key` |
+| research-flow edge | `G`, `research_edge`, from key, to key (a section key is `experiment:section`) |
+| research-flow appendix sub-group | `G`, `research_flow_appendix`, `appendix_label` (only when the flow has none yet; otherwise the existing sub-group's id) |
+| literature card and edge | `G`, `literature`, `key`; `G`, `literature_edge`, `key`, `target_id` |
+| `group_appendix` group | `G`, `group_appendix`, `label` |
+| `insert_blocks` block | `G`, `insert_block`, block `key` |
+| artifact card and edge | `G`, `artifact`, `key`; `G`, `artifact_edge`, `key`, mention id |
+| `pair_appendix_columns` section group | `G`, `section_appendix`, section `key` |
+| citation card and edge | `G`, `citation`, `key`; `G`, `citation_edge`, `key` |
+| `connect_reference` edge | `G`, `reference`, `key`, target id |
+| mapping title, detail, edge | `G`, `mapping`, `key`; title id, `mapping_detail`, field; `G`, `mapping_edge`, `key`, target id |
+| mapping master | `G`, `mapping_master`, `key` |
+| rebuttal header and stage | `G`, `rebuttal_header`, reviewer; `G`, `rebuttal_stage`, row `key`, stage index from `0` |
+| camera-ready group | `camera_ready`, `key`, `group` |
+
+For example, card `rq1` in group `a1b2c3d4e5f60718` is `node-id a1b2c3d4e5f60718 research_flow rq1`, and its `setup` section is `node-id a1b2c3d4e5f60718 research_flow e1 setup`. Every research-flow card also prints its id as its last line once applied.
+
+## Geometry
+
+Every `x` and `y` in a request is an absolute Canvas coordinate, not an offset from the target group or from another card. The only exception is a camera-ready addition, which uses the source paper's frame and is translated with the clone. `add_research_flow` requires integer `x` and `y` on every node and does not place cards itself.
+
+Never invent coordinates: a guessed position lands on existing cards. Run `inspect --group-id <G>` and choose free positions beside the cards the new ones extend. A request written without seeing the Canvas leaves `x` and `y` out; `plan` refuses it, naming the node and its missing values, so whoever applies it has to inspect and fill them first.
 
 ## Paper actions
 
@@ -60,7 +96,7 @@ Allowed mapping statuses are `wording`, `ready`, `pending`, `author input`, and 
 
 `add_research_flow` requires keyed `nodes` and explicit two-key `links`. Maintenance uses `edit_text` and `remove_items`.
 
-- Ordinary node: `key`, `kind`, `text`, `x`, `y`; optional geometry and `stream`.
+- Ordinary node: `key`, `kind`, `text`, absolute `x` and `y`; optional `width`, `height`, `node_id`, and `stream`. The card's id is `node-id <group id> research_flow <key>`.
 - `kind` is one of `rq`, `experiment`, `answer`, `bridge`, `thought` (coloured, in the flow) or `source`, `table`, `figure`, `implementation`, `params`, `log` (uncoloured side cards). Flow kinds get an H1 prefix when the text has no heading; side cards, bridges, and thoughts keep their text verbatim.
 - `implementation`: one per experiment, a two-column table of run grid, paths, commands, commits, and outputs, optionally followed by a `**추가 메모**` paragraph. `params`: one per project, the thresholds and model names that hold across experiments. `log`: a run that produced no usable evidence. Record why it was discarded and where its outputs are, but not its measurements: a discarded number is not worth keeping. A discarded run never stays a green experiment in the flow. See `skills/research-flow/references/content-structure.md`.
 - Figure: supply `file`, `width`, and `height` instead of `text`. A figure is a file node, so it takes no text and is the one kind that does not need any.

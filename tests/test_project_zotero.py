@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -15,7 +16,11 @@ from obs_project import (  # noqa: E402
     build_paper_flow,
     configure_vault,
     import_project,
+    VaultUnavailable,
     init_project,
+    local_repository,
+    record_repository,
+    repository_paths,
     resolve_project,
     resolve_vault,
     standardize_project,
@@ -421,3 +426,71 @@ class WebModeTest(unittest.TestCase):
             with self.assertRaises(ZoteroError) as raised:
                 call()
             self.assertIn("Zotero Desktop", str(raised.exception))
+
+
+class HostRoleTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+        self.fake_obsidian = str(self.root / "no-such-bin" / "obsidian")
+        environ = {key: value for key, value in os.environ.items() if key != "OBS_PAPER_VAULT"}
+        environ["OBS_PAPER_CONFIG"] = str(self.root / "missing" / "config.json")
+        self.env = patch.dict("os.environ", environ, clear=True)
+        self.env.start()
+
+    def tearDown(self) -> None:
+        self.env.stop()
+        self.directory.cleanup()
+
+    def repository(self) -> Path:
+        repo = self.root / "repo"
+        (repo / ".git").mkdir(parents=True)
+        (repo / "src").mkdir()
+        return repo
+
+    def test_no_config_and_no_cli_names_both_ways_forward(self) -> None:
+        with self.assertRaises(VaultUnavailable) as raised:
+            resolve_vault(executable=self.fake_obsidian)
+        message = str(raised.exception)
+        self.assertNotIn("cannot query Obsidian CLI", message)
+        self.assertNotIn("request", message)
+        for expected in ("vault-config", "obsidian-headless", "ob login", "config.json"):
+            self.assertIn(expected, message)
+
+    def test_unmapped_repository_lists_projects_instead_of_guessing(self) -> None:
+        vault = self.root / "NLP"
+        vault.mkdir()
+        other = self.root / "other"
+        other.mkdir()
+        init_project(vault, "Honorific")
+        init_project(vault, "Reasoning Trajectory", other)
+        with self.assertRaises(ProjectError) as raised:
+            resolve_project(vault, repository=self.repository())
+        message = str(raised.exception)
+        self.assertIn("Honorific (repository: unset)", message)
+        self.assertIn(f"Reasoning Trajectory (repository: {other.resolve()})", message)
+        self.assertIn("--add-repository", message)
+
+    def test_recording_a_repository_keeps_other_hosts_paths(self) -> None:
+        vault = self.root / "NLP"
+        vault.mkdir()
+        mac, server = self.root / "mac-repo", self.root / "server-repo"
+        mac.mkdir()
+        server.mkdir()
+        init_project(vault, "Demo", mac)
+        self.assertEqual(record_repository(vault, "Demo", server)["status"], "recorded")
+        self.assertEqual(record_repository(vault, "Demo", server)["status"], "exists")
+        metadata = vault / "Projects" / "Demo" / "project.md"
+        self.assertEqual(repository_paths(metadata), [str(mac.resolve()), str(server.resolve())])
+        self.assertEqual(resolve_project(vault, repository=mac)["project"], "Demo")
+        self.assertEqual(resolve_project(vault, repository=server)["project"], "Demo")
+        mac.rmdir()
+        self.assertEqual(local_repository(metadata), str(server.resolve()))
+
+    def test_standardize_with_repository_records_it_on_an_existing_project(self) -> None:
+        vault = self.root / "NLP"
+        vault.mkdir()
+        repo = self.repository()
+        init_project(vault, "Legacy")
+        standardize_project(vault, "Legacy", repo)
+        self.assertEqual(resolve_project(vault, repository=repo)["project"], "Legacy")

@@ -31,7 +31,15 @@ python ../../scripts/obs_paper.py vault-path
 
 Never assume a vault name or path. `OBS_PAPER_VAULT` may temporarily override the saved path. On a desktop with no saved setting, `vault-path` may auto-detect only when the official Obsidian CLI reports exactly one vault. On a headless server, configure that server's local `obsidian-headless` Sync folder explicitly because headless Sync does not provide the desktop Obsidian CLI.
 
-The research repository remains separate. `project.md` records its path for the current host so the active project can be resolved without scanning unrelated Canvas files. Do not reuse a Mac absolute path on a remote server; cross-host project resolution requires an explicit current-host path until host-scoped repository metadata is implemented.
+A server with no vault gets its own copy through `obsidian-headless`; the steps are under Server operation in [../../references/sync-topology.md](../../references/sync-topology.md). Propose the setup and install it only after the user approves. The user always runs `ob login`; never handle Obsidian account credentials.
+
+The research repository remains separate. `project.md` records the repository path of each host that has a checkout, a string for one and a list for several, so the active project can be resolved without scanning unrelated Canvas files. Resolve it with `project-resolve <vault> --repository <repo>`. When that fails, the error lists every project and the repository it records. Ask the user which project the repository belongs to, then record the mapping once:
+
+```bash
+python ../../scripts/obs_paper.py project-resolve <vault> --name <project> --add-repository <repo>
+```
+
+This appends the path and keeps the paths other hosts recorded. `project-init`, `project-import`, and `project-standardize` with `--repository` do the same for an existing project. Do not guess a project from Canvas contents.
 
 ## Storage access preflight
 

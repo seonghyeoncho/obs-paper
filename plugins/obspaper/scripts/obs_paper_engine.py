@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import difflib
 import hashlib
 import json
 import os
@@ -96,8 +97,32 @@ class CanvasDocument:
             if node.get("type") == "group" and node.get("label") == group_label
         ]
         if len(matches) != 1:
-            raise PlanError(f"group label must resolve once: {group_label!r} ({len(matches)} matches)")
+            raise PlanError(self._unresolved_label_message(group_label, matches))
         return matches[0]
+
+    def _unresolved_label_message(self, group_label: Any, matches: list[dict[str, Any]]) -> str:
+        head = f"group label must resolve once: {group_label!r} ({len(matches)} matches)"
+        if matches:
+            ids = ", ".join(node["id"] for node in matches)
+            return f"{head}; target it by group_id instead: {ids}"
+        labels = sorted(
+            {node["label"] for node in self.nodes if node.get("type") == "group" and isinstance(node.get("label"), str)}
+        )
+        groups = sum(1 for node in self.nodes if node.get("type") == "group")
+        if not groups:
+            # A Canvas of loose cards reads like a typo in the label otherwise.
+            return (
+                f"{head}; this Canvas has no groups at all ({len(self.nodes)} loose nodes), so no label "
+                "can resolve. Create the target group in Obsidian first: every request resolves its "
+                "target before any action runs, so no action can create it"
+            )
+        wanted = str(group_label).casefold()
+        nearest = sorted(
+            labels,
+            key=lambda label: (-difflib.SequenceMatcher(None, wanted, label.casefold()).ratio(), label),
+        )[:5]
+        listed = ", ".join(repr(label) for label in nearest) if nearest else "none (every group is unlabelled)"
+        return f"{head}; the Canvas has {groups} group(s), nearest labels: {listed}"
 
     def contained_non_groups(self, rect: Rect) -> list[dict[str, Any]]:
         return [node for node in self.nodes if node.get("type") != "group" and rect.contains(node)]

@@ -17,7 +17,7 @@ from urllib.parse import quote, urlencode, urljoin, urlparse, unquote
 from urllib.request import Request, urlopen
 
 from obs_paper_engine import apply_patch, compile_request
-from obs_project import _frontmatter_value, set_frontmatter_value
+from obs_project import _frontmatter_value, local_repository, set_frontmatter_value
 from record_action import append_action
 
 
@@ -442,9 +442,9 @@ def bib_keys(text: str) -> set[str]:
 
 def cited_keys(project: Path, sources: list[Path] | None = None) -> set[str]:
     if sources is None:
-        repository = _frontmatter_value(project / "project.md", "repository")
+        repository = local_repository(project / "project.md")
         roots = [project]
-        if repository and Path(repository).is_dir() and Path(repository).resolve() != project.resolve():
+        if repository and Path(repository).resolve() != project.resolve():
             roots.append(Path(repository))
         sources = [
             path
