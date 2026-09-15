@@ -77,7 +77,12 @@ Allowed mapping statuses are `wording`, `ready`, `pending`, `author input`, and 
 
 ## Paper-flow build spec
 
-After verifying the Zotero stored PDF, create one sentence-level Canvas in the vault-wide `Paper/` folder with:
+A paper flow is one Canvas per published paper in the vault-wide `Paper/` folder, laid out for reading beside a research flow. Build it from the Zotero item's stored PDF, or from a reviewed JSON spec:
+
+```bash
+python zotero_bridge.py paper-flow <project-folder> <item-key> [--spec-output flow.json] [--contributions b2,b3 | --no-contributions] [--replace]
+python obs_paper.py paper-flow-build <project-folder> <paper-flow-spec.json> [--replace]
+```
 
 ```json
 {
@@ -86,20 +91,41 @@ After verifying the Zotero stored PDF, create one sentence-level Canvas in the v
   "item_key": "ZOTERO1",
   "sections": [
     {
-      "key": "intro",
+      "key": "s1",
       "title": "Introduction",
       "blocks": [
-        {"key": "s1", "kind": "sentence", "paragraph": "p1", "text": "First original sentence."},
-        {"key": "s2", "kind": "sentence", "paragraph": "p1", "text": "Second original sentence."},
-        {"key": "sub", "kind": "heading", "level": 1, "text": "Background"},
-        {"key": "eq", "kind": "equation", "text": "$$x=1$$"}
+        {"key": "b1", "kind": "paragraph", "text": "A whole paragraph of the paper."},
+        {"key": "b2", "kind": "paragraph", "role": "contribution", "text": "In this paper we propose ..."},
+        {"key": "b3", "kind": "heading", "level": 1, "text": "Background"},
+        {"key": "b4", "kind": "caption", "text": "Figure 1: ..."},
+        {"key": "b5", "kind": "equation", "text": "$$x=1$$"}
       ]
     }
   ]
 }
 ```
 
-A manuscript `heading` block also takes `level` of `section`, `subsection`, or `paragraph`, which sets its colour; headings are never numbered. Blocks use `heading`, `sentence`, or `equation`; sentences require a stable paragraph key, headings may use indentation `level`, and equations require `$$` delimiters. `paper-flow-build` accepts only a reviewed JSON spec, creates `<Vault>/Paper/<sanitized full title>.canvas`, refuses a conflicting overwrite, and links its source card to Zotero. `--replace` intentionally rebuilds after copying the old Canvas to `Paper/.canvas-history/`. Automated PDF parsing is suspended and must not be invoked. A future PDF-flow workflow must use semantic prose blocks and inherit only the `paper` color grammar rather than the manuscript's sentence-splitting rule.
+Blocks use `heading`, `paragraph`, `caption`, `sentence`, or `equation`. A `paragraph` is one semantic prose block and one card; `sentence` remains for hand-written specs and requires a stable `paragraph` key; equations require `$$` delimiters. A flow `heading` takes an integer `level`, its depth below the section, which indents it and the blocks under it. (A manuscript `heading` block in `insert_blocks` instead takes `level` of `section`, `subsection`, or `paragraph`, which sets its colour.) Only the `paper` colour grammar applies: the title, section titles, and headings are purple `"6"`, a `paragraph` or `sentence` with `role: "contribution"` is green `"4"`, and everything else has no colour. Extra fields such as `page` are ignored.
+
+Each top-level section is one column 812px wide, 120px apart, with card heights from `estimate_text_height`, so no two cards overlap. All cards sit in one group labelled `paper_flow · <title>`, and a source card with the `\cite` command and Zotero link points at the title card. `paper-flow-build` creates `<Vault>/Paper/<sanitized full title>.canvas`, refuses a conflicting overwrite, and `--replace` rebuilds after copying the old Canvas to `Paper/.canvas-history/`. The result's `paper_flow` (the same value as `vault_link`) is what `link_literature` takes as `paper_flow`.
+
+### From a PDF
+
+`paper-flow` reads the Zotero stored PDF with `pdfplumber`, takes the title from Zotero metadata and the citation key from Better BibTeX or Zotero, and never splits a sentence. The full rules are the docstring of `pdf_to_flow.py`; this is the summary.
+
+Reading the page. Only upright characters are read, so the rotated arXiv side stamp and vertical labels never enter the text. A sub- or superscript joins a line only when it sits next to one of that line's characters, so tiny figure labels stay out of body text. A new word starts where the gap between characters exceeds 0.15 of the font size. Words whose vertical centres are within 0.3 of their size form one line, so small capitals stay on their line. A page is two columns when a strip in its middle 30% is crossed by body-size words on at most 15% of body rows; a page that fails this in a two-column document still uses the document's median gutter when most of its rows do not cross it. Words are split at the gutter before lines are formed, full-width lines cut the page into bands, and each band is read left column, then right.
+
+Before blocks are built, and counted in the result's `filtered`: running headers, footers, and page numbers; lines outside the body text's horizontal extent; figure text (lines under 0.8 of body size, or set mostly in a font family that is under 5% of the document and not a math font); table headers (short lines, not numbered headings, of mostly abbreviations in bold or spread apart, or with words more than 2.5 font sizes apart); tables (two or more nearby rows of three or more tokens with at least two numbers, grown to adjacent short lines, plus text inside `find_tables` regions); footnotes (smaller lines under the last body line of their column); and display math.
+
+Title and author block. The largest lines of two or more words on page 1 are the title, continued by close lines at least 0.75 of that size. Everything up to the first named, numbered, or outline heading is the author block and is dropped, except that when that heading is not Abstract, the prose paragraphs right above it are kept as an Abstract section.
+
+Headings. When the PDF has an outline (bookmarks), it is the primary source: each entry is matched to one to three consecutive lines on its destination page or the next whose text, numbering and punctuation ignored, equals the entry, preferring document order and then the line nearest the destination's height. The entry supplies the depth and text, and the outline is used when at least half its entries are found. Lines outside the outline can still be named headings (Abstract, References) or fully bold paragraph headings one level below the current section. Without a usable outline the fonts decide: named sections in bold, larger type, or capitals are top level; a numbered line (`3.2`, and `A`, `A.1` once References has passed or an `A` heading as large as the section headings appears) in bold, larger type, or capitals takes its depth from its dots, in any letter case; an unnumbered line 1.5pt above body size takes its depth from its size tier; a line at least 95% bold of at most eight words is a paragraph heading. A heading needs a word of three letters, does not end in a hyphen or sentence punctuation, has no gaps wider than 1.5 font sizes, sits no closer than three line pitches above a removed table line, and if unnumbered is not mostly abbreviations, numbers, and metric names. Each heading records `source`, `outline` or `font`, and the result counts them under `heading_sources`. Run-in paragraph headings ("Name. Text..." with only the lead in bold) are prose: the lead stays at the start of its paragraph. Repeated headings are kept as they are; nothing is deduplicated. Depth 0 opens a section column; References and Bibliography are left out.
+
+Block boundaries. A heading closes the open block. Otherwise a line starts a new block when (1) it starts a caption (`Figure 3:`, `Fig. 3.`, `Table 2:`) or a list item (`1)`, `2.`, `(a)`, bullet, dash); (2) its font size differs from the previous line by more than 0.5pt; (3) on the same page and column it sits more than 1.4 line pitches below the previous line, the pitch being the median spacing of body lines; or (4) the previous line ends in `.`, `?`, `!`, or `:` and either this line is indented by 0.8 body-font sizes past the column's left edge or the previous line stops two body-font sizes short of the right edge. Rule 3 does not apply across a page or column break. Lines join with spaces; a line ending in a hyphen joins the next without a space, keeping the hyphen when the hyphenated word occurs elsewhere in the document and the joined word does not, and dropping it when the joined word occurs elsewhere or the next line starts in lowercase. A block starting like a caption is kind `caption`, every other block `paragraph`. A fragment (under three words, or a short piece that is neither a list item nor a whole sentence) is joined to the paragraph it continues, before or after, and dropped otherwise.
+
+Contribution cards are marked, not decided. In the Abstract and the section whose title contains "Introduction", a paragraph containing `we propose`, `we introduce`, `we present`, `our contribution(s)`, `main`/`key`/`primary contribution(s)`, `contributions of this/our paper/work`, or `this paper/work proposes/introduces/presents` is green, and so are list items directly after it. The result lists the marked keys under `contributions`. The author reviews them: rerun with `--contributions b2,b3` to colour exactly those paragraph keys, `--no-contributions` to leave everything uncoloured, or edit `role` in the `--spec-output` file and rebuild with `paper-flow-build --replace`.
+
+Limits. Without an outline, heading detection depends on the template setting headings apart by weight, size, capitals, or numbering; a template that sets unnumbered headings in plain body type loses them. A dataset-name paragraph heading made only of abbreviations (`MS COCO`) is not a heading. A centred equation or table cell that shares a row with a column line on a two-column page is read as full width, and three-column layouts are read in the wrong order. Figure text in the body font at body size is kept as paragraphs. Equations are dropped when displayed and kept as extracted text when inline, never as `equation` cards. Code listings and captions set in a rarely used font count as figure text. A paragraph whose last line fills the column and whose next line is neither indented nor spaced apart merges with the next one. Footnotes are dropped, and a references list set as small as footnotes is dropped with them. A PDF with no text layer (a scan) or no detectable headings fails with an error rather than producing a partial flow; OCR it first. Reading a stored PDF needs Zotero Desktop on the same machine, not web mode, and takes several seconds per paper.
 
 ## Safe execution
 
