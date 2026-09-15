@@ -139,4 +139,4 @@ A manuscript `heading` block also takes `level` of `section`, `subsection`, or `
 
 ## Safe execution
 
-Run `inspect`, `plan`, review the patch, `apply --log CANVAS_ACTION_LOG.md`, `validate`, and a second `plan`. The second plan must contain an empty `operations` list before the next workflow stage mutates that stage's inputs.
+On a Canvas more than one host writes, take the lease first (`lease acquire`, wait for Sync, `lease status`; see `sync-topology.md`). `apply` refuses a patch while another device holds the lease, and without a lease when `project.md` sets `canvas_lease: required`. Run `inspect`, `plan`, review the patch, `apply --log CANVAS_ACTION_LOG.md`, `validate`, and a second `plan`, then `lease release`. The second plan must contain an empty `operations` list before the next workflow stage mutates that stage's inputs.

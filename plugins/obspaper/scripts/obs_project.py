@@ -140,14 +140,25 @@ def _valid_vault(path: Path) -> Path:
     return resolved
 
 
-def configure_vault(path: Path, name: str | None = None, config_path: Path | None = None) -> dict[str, str]:
-    """Persist this host's active vault path outside the synced vault."""
+def configure_vault(
+    path: Path, name: str | None = None, config_path: Path | None = None, device: str | None = None
+) -> dict[str, str]:
+    """Persist this host's active vault path, and its Sync device name, outside the synced vault."""
     vault = _valid_vault(path)
     destination = _vault_config_path(config_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     data = {"path": str(vault)}
     if name:
         data["name"] = name
+    previous: Any = None
+    if destination.is_file():
+        try:
+            previous = json.loads(destination.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            previous = None
+    kept = previous.get("device") if isinstance(previous, dict) else None
+    if device or isinstance(kept, str):
+        data["device"] = device or kept
     temporary = destination.with_suffix(destination.suffix + ".tmp")
     temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary.replace(destination)

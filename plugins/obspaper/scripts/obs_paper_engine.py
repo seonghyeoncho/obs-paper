@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from canvas_lease import LeaseError, lease_status, write_permission
 from record_action import append_action
 
 
@@ -2367,7 +2368,14 @@ def _dump_canvas(data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def apply_patch(canvas: Path, patch: dict[str, Any], log: Path | None = None) -> dict[str, Any]:
+def apply_patch(
+    canvas: Path,
+    patch: dict[str, Any],
+    log: Path | None = None,
+    *,
+    device: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     expected_hash = patch.get("expected_sha256")
     if canvas_sha256(canvas) != expected_hash:
         raise PreconditionError("Canvas SHA-256 does not match the compiled patch")
@@ -2376,6 +2384,15 @@ def apply_patch(canvas: Path, patch: dict[str, Any], log: Path | None = None) ->
         raise PlanError("patch operations must be a list")
     if not operations:
         return {"status": "no-op", "operations": 0, "backup": None}
+    # The hash says nobody changed the Canvas since planning; the lease says nobody
+    # else is about to. A no-op writes nothing, so it needs neither.
+    try:
+        lease = lease_status(canvas, device=device, now=now)
+    except LeaseError as exc:
+        raise PreconditionError(str(exc)) from exc
+    lease_error, lease_warning = write_permission(lease)
+    if lease_error:
+        raise PreconditionError(lease_error)
 
     document = CanvasDocument.load(canvas)
     for operation in operations:
@@ -2414,7 +2431,10 @@ def apply_patch(canvas: Path, patch: dict[str, Any], log: Path | None = None) ->
         "operations": len(operations),
         "backup": str(backup),
         "sha256": canvas_sha256(canvas),
+        "lease": lease["state"],
     }
+    if lease_warning:
+        result["warning"] = lease_warning
     if log is not None:
         append_action(
             log,

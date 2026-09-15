@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from canvas_lease import LeaseError, acquire_lease, lease_status, release_lease
 from obs_paper_engine import (
     PlanError,
     PreconditionError,
@@ -29,6 +30,7 @@ from obs_project import (
     resolve_vault,
     standardize_project,
 )
+from preflight import preflight
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -111,6 +113,33 @@ def main() -> None:
     vault_config_parser.add_argument("path", type=Path)
     vault_config_parser.add_argument("--name")
     vault_config_parser.add_argument("--config", type=Path)
+    vault_config_parser.add_argument(
+        "--device", help="this host's Obsidian Sync device name, as given to ob sync-setup --device-name"
+    )
+
+    preflight_parser = subparsers.add_parser(
+        "preflight", help="report whether this host may write its project's Canvas now, and what to do next"
+    )
+    preflight_parser.add_argument("--repository", type=Path, default=Path.cwd())
+    preflight_parser.add_argument("--obsidian", default="obsidian")
+    preflight_parser.add_argument("--config", type=Path)
+
+    lease_parser = subparsers.add_parser("lease", help="take, check, or give back the single-writer lease on a Canvas")
+    lease_commands = lease_parser.add_subparsers(dest="lease_command", required=True)
+    lease_acquire = lease_commands.add_parser("acquire")
+    lease_acquire.add_argument("canvas", type=Path)
+    lease_acquire.add_argument("--minutes", type=int, default=30)
+    lease_acquire.add_argument("--purpose")
+    lease_acquire.add_argument("--config", type=Path)
+    lease_release = lease_commands.add_parser("release")
+    lease_release.add_argument("canvas", type=Path)
+    lease_release.add_argument(
+        "--force", action="store_true", help="remove another device's unexpired lease; the user decides this, not an agent"
+    )
+    lease_release.add_argument("--config", type=Path)
+    lease_state = lease_commands.add_parser("status")
+    lease_state.add_argument("canvas", type=Path)
+    lease_state.add_argument("--config", type=Path)
 
     node_id_parser = subparsers.add_parser(
         "node-id", help="compute a deterministic id from its parts, without reading any Canvas"
@@ -165,10 +194,19 @@ def main() -> None:
         elif args.command == "node-id":
             emit({"parts": args.parts, "id": deterministic_id(*args.parts)})
         elif args.command == "vault-config":
-            emit(configure_vault(args.path, args.name, args.config))
+            emit(configure_vault(args.path, args.name, args.config, args.device))
+        elif args.command == "preflight":
+            emit(preflight(args.repository, executable=args.obsidian, config_path=args.config))
+        elif args.command == "lease":
+            if args.lease_command == "acquire":
+                emit(acquire_lease(args.canvas, minutes=args.minutes, purpose=args.purpose, config_path=args.config))
+            elif args.lease_command == "release":
+                emit(release_lease(args.canvas, force=args.force, config_path=args.config))
+            else:
+                emit(lease_status(args.canvas, config_path=args.config))
         else:
             emit(build_paper_flow(args.project, args.spec, replace=args.replace))
-    except (PlanError, PreconditionError, ProjectError, OSError, json.JSONDecodeError) as exc:
+    except (PlanError, PreconditionError, ProjectError, LeaseError, OSError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
 
 

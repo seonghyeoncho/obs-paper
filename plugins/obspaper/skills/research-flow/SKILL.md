@@ -21,7 +21,7 @@ Treat the user's research notes and existing Obsidian Canvas as paired research 
 
 ## Start every research-flow task
 
-1. Resolve the active project with `obs_paper.py project-resolve <vault> --repository <repo>`. If no project records this repository, ask the user which project it is and record it with `project-resolve <vault> --name <project> --add-repository <repo>`. Never infer the project from matching RQ labels or Canvas text.
+1. Run `obs_paper.py preflight` from the repository and follow its `next_steps`. It resolves the vault, the project recorded for this repository, and the Canvas lease. If no project records this repository, ask the user which project it is and record it with `project-resolve <vault> --name <project> --add-repository <repo>`. Never infer the project from matching RQ labels or Canvas text. Hold the lease (`lease acquire`, then wait for Sync) before any `apply` on a Canvas other hosts also write.
 2. Read the repository instructions, current manuscript, Canvas JSON, and adjacent `CANVAS_ACTION_LOG.md` before editing.
 3. Validate that the Canvas parses and that node and edge IDs are unique and all edge endpoints exist.
 4. Infer the Canvas's actual relationship grammar from node positions, colors, text, images, and explicit edges. Spatial adjacency may carry more meaning than arrows; never add edges mechanically.
