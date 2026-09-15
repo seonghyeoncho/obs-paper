@@ -115,11 +115,11 @@ Record the resulting project id as `overleaf_project` in the project's `project.
 
 | Workflow | Actions |
 |---|---|
-| `paper` | `group_appendix`, `insert_blocks`, `place_artifact`, `pair_appendix_columns`, `split_citation`, `connect_reference`, `fit_section_title`, `move_nodes`, `shift_sibling_group`, `normalize_equations`, `normalize_paper_colors`, `compact_sections` |
+| `paper` | `group_appendix`, `insert_blocks`, `place_artifact`, `pair_appendix_columns`, `split_citation`, `connect_reference`, `fit_section_title`, `move_nodes`, `shift_sibling_group`, `normalize_equations`, `normalize_paper_colors`, `compact_sections`, `resize_group` |
 | `camera-ready-mapping` | `mapping_master`, `map_issue`, `remove_items` |
 | `camera-ready` | `build_camera_ready` |
 | `rebuttal` | `layout_rebuttal` |
-| `research-flow` | `add_research_flow`, `edit_text`, `move_stream`, `link_literature`, `remove_items` |
+| `research-flow` | `add_research_flow`, `edit_text`, `move_stream`, `link_literature`, `remove_items`, `create_group`, `resize_group` |
 
 ```json
 {

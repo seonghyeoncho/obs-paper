@@ -1597,3 +1597,203 @@ class ResearchFlowStreamTest(unittest.TestCase):
         with self.assertRaises(PlanError) as raised:
             compile_document(canvas, request, document_id="t")
         self.assertIn("'paper_v1'", str(raised.exception))
+
+
+class ResearchFlowPhaseGroupTest(unittest.TestCase):
+    """A flow split into phase sub-groups, as in issues #30 and #32."""
+
+    def canvas(self) -> dict[str, object]:
+        return {
+            "nodes": [
+                {"id": "flow", "type": "group", "label": "Research Flow", "x": -100, "y": -200, "width": 3000, "height": 3000},
+                {"id": "phase0", "type": "group", "label": "Phase 0", "x": -50, "y": -100, "width": 2900, "height": 1500},
+                {"id": "phase1", "type": "group", "label": "Phase 1", "x": -50, "y": 1480, "width": 2900, "height": 1000},
+                {"id": "q0", "type": "text", "x": 0, "y": 0, "width": 812, "height": 100, "color": "6", "text": "# RQ0"},
+                {"id": "q19", "type": "text", "x": 0, "y": 1500, "width": 812, "height": 100, "color": "6", "text": "# RQ19"},
+            ],
+            "edges": [],
+        }
+
+    def request(self, *actions: dict[str, object]) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "workflow": "research-flow",
+            "target": {"group_label": "Research Flow"},
+            "actions": list(actions),
+        }
+
+    def write(self, directory: str, data: dict[str, object]) -> Path:
+        canvas = Path(directory) / "flow.canvas"
+        canvas.write_text(json.dumps(data), encoding="utf-8")
+        return canvas
+
+    def groups(self, canvas: Path) -> dict[str, dict[str, object]]:
+        return {node["id"]: node for node in json.loads(canvas.read_text())["nodes"] if node["type"] == "group"}
+
+    def seven_cards(self) -> dict[str, object]:
+        # One RQ block appended at the foot of Phase 1: an experiment with two
+        # sections, its answer, and the table, implementation, and figure beside it.
+        return {
+            "op": "add_research_flow",
+            "nodes": [
+                {"key": "e31", "kind": "experiment", "text": "RQ-E31", "x": 0, "y": 2400, "height": 100,
+                 "sections": [
+                     {"key": "setup", "heading": "Setup", "text": "cfg", "height": 200},
+                     {"key": "results", "heading": "Results", "text": "numbers", "height": 200},
+                 ]},
+                {"key": "a31", "kind": "answer", "text": "RQ-A31", "x": 0, "y": 3000, "height": 100},
+                {"key": "t31", "kind": "table", "text": "| a | b |\n|---|---|\n| 1 | 2 |", "x": 900, "y": 2400, "height": 300},
+                {"key": "i31", "kind": "implementation", "text": "| run | path |", "x": 900, "y": 2740, "height": 300},
+                {"key": "f31", "kind": "figure", "file": "assets/f31.png", "x": 900, "y": 3080, "width": 812, "height": 305},
+            ],
+            "links": [["e31", "a31"], ["t31", "e31:results"], ["i31", "e31:setup"], ["f31", "e31:results"]],
+        }
+
+    def test_cards_appended_below_a_phase_grow_the_phase_and_the_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = self.write(directory, self.canvas())
+            request = self.request(self.seven_cards())
+            patch = compile_request(canvas, request)
+            grown = [op["node_id"] for op in patch["operations"] if op["op"] == "upsert_group"]
+            self.assertEqual(grown, ["phase1", "flow"])
+            apply_patch(canvas, patch)
+            groups = self.groups(canvas)
+            # the figure is the lowest card: 3080 + 305, plus the group's 20px padding
+            self.assertEqual(groups["phase1"]["y"] + groups["phase1"]["height"], 3405)
+            self.assertEqual((groups["phase1"]["x"], groups["phase1"]["y"], groups["phase1"]["width"]), (-50, 1480, 2900))
+            self.assertEqual(groups["flow"]["y"] + groups["flow"]["height"], 3425)
+            self.assertEqual(groups["phase0"], self.canvas()["nodes"][1])
+            cards = [node for node in json.loads(canvas.read_text())["nodes"] if node["type"] != "group"]
+            self.assertEqual(len(cards), 2 + 7)
+            self.assertTrue(all(node_rect(groups["phase1"]).contains(node) for node in cards if node["y"] >= 1480))
+            self.assertEqual(compile_request(canvas, request)["operations"], [])
+
+    def test_a_flow_without_phases_grows_as_before(self) -> None:
+        data = self.canvas()
+        data["nodes"] = [node for node in data["nodes"] if node["id"] not in {"phase0", "phase1"}]
+        patch = compile_document(data, self.request(self.seven_cards()), document_id="t")
+        self.assertEqual([op["node_id"] for op in patch["operations"] if op["op"] == "upsert_group"], ["flow"])
+
+    def test_a_card_far_below_every_phase_grows_only_the_flow(self) -> None:
+        request = self.request({
+            "op": "add_research_flow",
+            "nodes": [{"key": "loose", "kind": "rq", "text": "RQ40", "x": 0, "y": 2480 + 241, "height": 100}],
+            "links": [],
+        })
+        patch = compile_document(self.canvas(), request, document_id="t")
+        self.assertEqual([op["node_id"] for op in patch["operations"] if op["op"] == "upsert_group"], ["flow"])
+
+    def test_a_phase_is_not_grown_over_the_next_phase(self) -> None:
+        # the card clears Phase 1, but its padding would not
+        request = self.request({
+            "op": "add_research_flow",
+            "nodes": [{"key": "late", "kind": "answer", "text": "RQ-A18", "x": 0, "y": 1300, "height": 170}],
+            "links": [],
+        })
+        with self.assertRaises(PlanError) as raised:
+            compile_document(self.canvas(), request, document_id="t")
+        message = str(raised.exception)
+        self.assertIn("'Phase 0'", message)
+        self.assertIn("'Phase 1'", message)
+
+    def test_a_card_straddling_a_phase_edge_is_refused(self) -> None:
+        request = self.request({
+            "op": "add_research_flow",
+            "nodes": [{"key": "wide", "kind": "rq", "text": "RQ20", "x": 2500, "y": 1700, "height": 100}],
+            "links": [],
+        })
+        with self.assertRaises(PlanError) as raised:
+            compile_document(self.canvas(), request, document_id="t")
+        self.assertIn("straddles the edge of sub-group 'Phase 1'", str(raised.exception))
+
+    def test_move_stream_grows_the_phase_around_the_appendix(self) -> None:
+        data = self.canvas()
+        data["nodes"].append(
+            {"id": "q21", "type": "text", "x": 0, "y": 2360, "width": 812, "height": 100, "color": "3", "text": "# RQ-A21"}
+        )
+        request = self.request({
+            "op": "move_stream", "stream": "appendix", "x": 1800, "node_ids": ["q21"],
+            "appendix_label": "Appendix (Phase 1)",
+        })
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = self.write(directory, data)
+            apply_patch(canvas, compile_request(canvas, request))
+            groups = self.groups(canvas)
+            appendix = next(group for group in groups.values() if group["label"] == "Appendix (Phase 1)")
+            self.assertTrue(node_rect(groups["phase1"]).contains(appendix))
+            self.assertEqual(groups["phase1"]["y"] + groups["phase1"]["height"], 2360 + 100 + 20 + 20)
+            self.assertEqual(compile_request(canvas, request)["operations"], [])
+
+    def test_resize_group_changes_only_the_given_fields(self) -> None:
+        # the flow is relabelled, so the rerun has to find it by id
+        request = {**self.request({
+            "op": "resize_group",
+            "groups": [
+                {"group_id": "phase1", "height": 1400},
+                {"group_id": "flow", "height": 3200, "label": "Research Flow — superposition"},
+            ],
+        }), "target": {"group_id": "flow"}}
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = self.write(directory, self.canvas())
+            patch = compile_request(canvas, request)
+            self.assertEqual([op["node_id"] for op in patch["operations"]], ["phase1", "flow"])
+            apply_patch(canvas, patch)
+            groups = self.groups(canvas)
+            self.assertEqual(groups["phase1"], {**self.canvas()["nodes"][2], "height": 1400})
+            self.assertEqual(
+                groups["flow"],
+                {**self.canvas()["nodes"][0], "height": 3200, "label": "Research Flow — superposition"},
+            )
+            self.assertEqual(compile_request(canvas, request)["operations"], [])
+
+    def test_resize_group_refuses_to_change_what_holds_what(self) -> None:
+        data = self.canvas()
+        # a card that already fell out below Phase 1
+        data["nodes"].append({"id": "stray", "type": "text", "x": 0, "y": 2600, "width": 812, "height": 100, "text": "late"})
+        for entries, expected in (
+            ([{"group_id": "phase1", "height": 100}], "push the card 'q19'"),
+            ([{"group_id": "flow", "height": 2000}], "push the group 'Phase 1'"),
+            ([{"group_id": "phase0", "height": 1600}], "overlap the group 'Phase 1'"),
+            ([{"group_id": "phase1", "height": 2000}], "past its parent group 'Research Flow'"),
+            ([{"group_id": "phase1", "height": 1150}], "card 'stray' at x=0..812, y=2600..2700 straddling"),
+        ):
+            with self.assertRaises(PlanError) as raised:
+                compile_document(data, self.request({"op": "resize_group", "groups": entries}), document_id="t")
+            self.assertIn(expected, str(raised.exception), entries)
+
+    def test_resize_group_is_allowed_in_the_paper_workflow(self) -> None:
+        request = {**self.request({"op": "resize_group", "groups": [{"group_id": "phase1", "width": 2950}]}), "workflow": "paper"}
+        patch = compile_document(self.canvas(), request, document_id="t")
+        self.assertEqual(patch["operations"][0]["after"]["width"], 2950)
+
+    def test_create_group_makes_a_phase_and_a_card_then_grows_it(self) -> None:
+        create = self.request({
+            "op": "create_group", "key": "phase2", "label": "Phase 2",
+            "x": -50, "y": 2560, "width": 2900, "height": 200,
+        })
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = self.write(directory, self.canvas())
+            apply_patch(canvas, compile_request(canvas, create))
+            self.assertEqual(compile_request(canvas, create)["operations"], [])
+            phase2_id = deterministic_id("flow", "group", "phase2")
+            self.assertEqual(self.groups(canvas)[phase2_id]["label"], "Phase 2")
+            add = self.request({
+                "op": "add_research_flow",
+                "nodes": [{"key": "rq41", "kind": "rq", "text": "RQ41", "x": 0, "y": 2600, "height": 300}],
+                "links": [],
+            })
+            apply_patch(canvas, compile_request(canvas, add))
+            groups = self.groups(canvas)
+            self.assertEqual(groups[phase2_id]["y"] + groups[phase2_id]["height"], 2920)
+            self.assertEqual(groups["phase1"]["height"], 1000)
+
+    def test_create_group_refuses_to_cut_a_phase_or_a_card(self) -> None:
+        for fields, expected in (
+            ({"y": 1300, "height": 400}, "overlap the group 'Phase 0'"),
+            ({"x": 400, "y": 1520, "height": 100, "width": 600}, "straddling"),
+            ({"y": 2700, "height": 400}, "inside the target group"),
+        ):
+            action = {"op": "create_group", "key": "p", "label": "Phase X", "x": -50, "width": 2900, **fields}
+            with self.assertRaises(PlanError) as raised:
+                compile_document(self.canvas(), self.request(action), document_id="t")
+            self.assertIn(expected, str(raised.exception), fields)

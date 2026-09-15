@@ -17,6 +17,7 @@ Treat each native `paper_vN` group as one manuscript-version workspace. The vers
 - `insert_blocks` requires an exact anchor node, individually keyed text blocks, and the complete explicit list of downstream nodes that must move. Use `fit_group_id` when inserting into a section-owned Appendix group so its 20px boundary is recomputed. Tables and figures are not prose blocks and must wait for an outside-artifact handler.
 - Use `place_artifact`, `split_citation`, and `connect_reference` for side artifacts and explicit references; use `fit_section_title` after the section rectangle changes.
 - Use `pair_appendix_columns` for section-owned Appendix lanes, `normalize_equations` for fenced-math conversion, `normalize_paper_colors` for the complete manuscript-owned node set, `compact_sections` for ordered top-level section rectangles, `move_nodes` for an explicit managed set, and `shift_sibling_group` only for a required rigid-body collision shift.
+- Use `resize_group` to move, resize, or relabel `paper_vN` or a group inside it without moving any card. Only the fields given change, and it refuses a change that would push a card or group out, leave a group outside its parent, cut through a card, or overlap another group.
 - Every mutation request names exact node IDs. Do not infer a broad deletion or movement set from coordinates alone.
 
 ## Assembling the LaTeX
