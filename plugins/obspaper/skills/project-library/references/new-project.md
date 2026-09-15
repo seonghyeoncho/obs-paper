@@ -11,6 +11,8 @@ python ../../scripts/zotero_bridge.py project-setup <vault>/Projects/<project>
 
 `project-init` creates the project Canvas, metadata, action log, `assets/`, `references.bib`, and `searches.jsonl`, plus the shared `<Vault>/Paper/` folder when absent. It never creates project-local `papers/` or `Paper/` directories. It is idempotent and never overwrites an existing Canvas or metadata file. `project-setup` creates or reuses one exact-name top-level Zotero Collection and stores its key in `project.md`.
 
+Create stage groups with the fixed labels from `../../references/request-schema.md` -- `research_flow`, `paper_v1`, and later `paper_vN`, `Rebuttal`, `paper_camera_ready` -- and run `python ../../scripts/obs_paper.py project-groups <vault> <project>` after each one so `project.md` records its id under `groups:`.
+
 ## Add literature
 
 For each search, record the query before adding selected papers:

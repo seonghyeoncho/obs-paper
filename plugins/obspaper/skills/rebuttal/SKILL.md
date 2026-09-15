@@ -5,7 +5,7 @@ description: "Organize academic peer-review material in an existing Obsidian Can
 
 # Rebuttal
 
-Use the existing native `Rebuttal` group as a reviewer-by-reviewer working grid. Preserve the group ID and all unrelated cards. Do not rebuild the group or merge similar comments from different reviewers.
+Use the existing native `Rebuttal` group as a reviewer-by-reviewer working grid; `Rebuttal` is the fixed label, and `project.md` records its id as `rebuttal` under `groups:`. Preserve the group ID and all unrelated cards. Do not rebuild the group or merge similar comments from different reviewers.
 
 ## Deterministic automation
 

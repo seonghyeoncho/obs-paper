@@ -19,7 +19,7 @@ Create `paper_camera_ready` from the mapped source version. The final group cont
 ## Build and apply
 
 - Copy manuscript headings, prose, citations, equations, tables, figures, Appendix content, and internal reference edges. Do not copy the master list, mapping cards, evidence-only cards, or mapping edges.
-- Use the `paper` skill's section-paired layout: main text in the left column, its supporting Appendix in the right column, and tables/figures in outside artifact lanes. Do not create `paper_camera_ready appendix` or any separate Appendix group.
+- Use the `paper` skill's section-paired layout: main text in the left column, its supporting Appendix in the right column, and tables/figures in outside artifact lanes. Do not create `paper_camera_ready appendix` or any separate Appendix group. A section-scoped Appendix sub-group inside the final group is labelled `paper_camera_ready · <Section> · Appendix <letters>`, so it does not collide with the same section in the source `paper_vN`; address an older unprefixed one with `"within": "paper_camera_ready"`.
 - Process every mapping card by its Canvas node ID and visible reviewer label/topic. Do not introduce `CR-*` identifiers.
 - Apply every `ready` or `wording` intervention at its exact target. A promised result is complete only when its actual prose, values, table, figure, caption, or definition appears in the final group.
 - Color every replaced or newly added manuscript node yellow (`"3"`). Preserve unchanged colors. Yellow marks a camera-ready diff, not uncertainty.

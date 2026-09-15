@@ -4,7 +4,7 @@ Read this before writing or revising `paper_v1` prose. Layout-only work does not
 
 ## The versions are stages
 
-`paper_v1` is the Korean draft and the author's own working-out. `paper_v2` is the English translation that gets submitted; `rebuttal` answers reviewers; `camera_ready` folds accepted promises back in. So a Korean v1 under an English venue is correct, not a defect, and v1 is what the translation will be written from — edit it as Korean academic prose, and never translate it in place.
+`paper_v1` is the Korean draft and the author's own working-out. `paper_v2` is the English translation that gets submitted, and `paper_v3` onward revise that submission draft; `rebuttal` answers reviewers; `camera_ready` folds accepted promises back in. So a Korean v1 under an English venue is correct, not a defect, and v1 is what the translation will be written from — edit it as Korean academic prose, and never translate it in place.
 
 ## These rules are not the research-flow rules
 

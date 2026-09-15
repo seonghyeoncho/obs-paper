@@ -14,7 +14,27 @@ Use one JSON object:
 Every action names itself under `op`. The action lists below are written as
 `op-name`: required fields; optional ones follow a semicolon.
 
-`target` contains exactly one of `group_id` or `group_label`. Resolve IDs with `inspect`. Stable `key` values produce deterministic IDs.
+`target` contains exactly one of `group_id` or `group_label`, and optionally `within`. Resolve IDs with `inspect`. Stable `key` values produce deterministic IDs.
+
+## Group labels
+
+A tool finds a stage by its group label, so the labels that name a stage are fixed:
+
+- `research_flow` for the research flow. A request for `research_flow` also accepts the spellings older canvases use -- `research flow`, `Research Flow`, `Research Flow — <subtitle>`, `<Project> Research Flow` -- but only when exactly one group on the canvas spells it. A group labelled exactly as requested always wins, and two variants with no exact label are refused.
+- `paper_v1`, `paper_v2`, and further `paper_v<N>` for each later revision of the manuscript.
+- `Rebuttal` and `paper_camera_ready`.
+
+A research flow whose protocol changed part-way -- a new training length, a new model -- is split into phase sub-groups labelled `Phase <n> — <what changed>` inside the one `research_flow` container. The container never carries a phase label, phases do not overlap, and each phase's appendix sub-group sits inside its own phase.
+
+Sub-group labels repeat across versions: `paper_v1`, `paper_v2`, and `paper_camera_ready` each hold their own `Results · Appendix B–H`. Such a label cannot resolve alone, so scope it to its version:
+
+```json
+"target": {"group_label": "Results · Appendix B–H", "within": "paper_v2"}
+```
+
+`within` names the parent group by label and resolves the target only among groups geometrically inside it. It also checks a `group_id` against that parent. `inspect --group-label ... --within paper_v2` does the same. Give a new sub-group a version-prefixed label, `paper_v2 · Results · Appendix B–H`, so it resolves without scoping.
+
+`project.md` records the id of each stage group in a `groups:` block (`research_flow`, `phase_<n>`, `paper_v<N>`, `rebuttal`, `camera_ready`), so a caller that knows the project can pass `group_id` without opening the canvas. `project-groups <vault> <project>` fills it and lists the groups it could not classify. `migrate-labels <canvas>` brings an older canvas onto the contract; see `skills/project-library/references/migrate-project.md`.
 
 ## Paper actions
 
