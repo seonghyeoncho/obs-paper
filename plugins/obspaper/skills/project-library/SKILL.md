@@ -66,8 +66,8 @@ The required order is:
 2. Verify metadata and lawful PDF access.
 3. Add the item to the project Zotero Collection and import the PDF as a Zotero stored-file attachment.
 4. Export that Collection to `references.bib`.
-5. Do not build a PDF-derived Canvas while PDF-to-flow conversion is suspended.
-6. Link a target-specific literature card to the exact RQ or bridge-question using its Zotero item and citation key. Add a paper-flow link later when the replacement workflow creates one.
+5. Optionally build the paper flow from the stored PDF with `zotero_bridge.py paper-flow`. It writes `<Vault>/Paper/<title>.canvas` of headings and paragraph blocks, marks contribution candidates green for the author to confirm, and fails clearly on a PDF without a text layer. See `literature-flow` for the review step and the limits.
+6. Link a target-specific literature card to the exact RQ or bridge-question using its Zotero item and citation key, and pass the paper flow's `paper_flow` path when one exists.
 7. Audit manuscript citation keys against the exported bibliography.
 
 The exporter refuses to replace `references.bib` when the candidate export would remove a citation key already used by the project. Better BibTeX remains preferred because stable citation keys reduce accidental key changes; the audit is still required.
@@ -100,9 +100,10 @@ python ../../scripts/zotero_bridge.py add <project-folder> <metadata.json> <pape
 python ../../scripts/zotero_bridge.py export <project-folder>
 python ../../scripts/zotero_bridge.py audit <project-folder> [manuscript.tex ...]
 python ../../scripts/zotero_bridge.py canvas-link <canvas> --group-label paper_v1 --sentence-id <node-id> --item-key <item-key>
-python ../../scripts/obs_paper.py paper-flow-build <project-folder> <paper-flow-spec.json>
+python ../../scripts/zotero_bridge.py paper-flow <project-folder> <item-key> [--spec-output flow.json] [--contributions b2,b3 | --no-contributions] [--replace]
+python ../../scripts/obs_paper.py paper-flow-build <project-folder> <paper-flow-spec.json> [--replace]
 ```
 
-`project-setup` creates or reuses the exact-name Zotero Collection and records its key in `project.md`. `attach` imports a PDF into an existing Zotero item and verifies the stored file. `save` adds an existing item that already has a stored PDF to the project Collection and refreshes the bibliography. `add` creates the verified metadata item, imports its PDF into Zotero, and refreshes the bibliography. `audit` exits nonzero when a manuscript citation is absent from `references.bib`. `canvas-link` expects the Zotero citation command already present in the sentence, replaces it with `{}`, and creates a grey side card containing the exact command and an `Open in Zotero` link.
+`project-setup` creates or reuses the exact-name Zotero Collection and records its key in `project.md`. `attach` imports a PDF into an existing Zotero item and verifies the stored file. `save` adds an existing item that already has a stored PDF to the project Collection and refreshes the bibliography. `add` creates the verified metadata item, imports its PDF into Zotero, and refreshes the bibliography. `audit` exits nonzero when a manuscript citation is absent from `references.bib`. `paper-flow` needs `pdfplumber` (`python -m pip install pdfplumber`) and Zotero Desktop, reads the item's stored PDF, and writes its paper-flow Canvas; `paper-flow-build` rebuilds one from a reviewed spec. `canvas-link` expects the Zotero citation command already present in the sentence, replaces it with `{}`, and creates a grey side card containing the exact command and an `Open in Zotero` link.
 
 Do not create a Zotero item from guessed metadata, bypass paywalls, or download a PDF without a verified lawful source. Record project, paper, and Canvas mutations in `CANVAS_ACTION_LOG.md` and report unavailable PDFs, missing metadata, denied Zotero authorization, and absent citation keys as blockers.

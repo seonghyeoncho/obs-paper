@@ -77,7 +77,12 @@ Allowed mapping statuses are `wording`, `ready`, `pending`, `author input`, and 
 
 ## Paper-flow build spec
 
-After verifying the Zotero stored PDF, create one sentence-level Canvas in the vault-wide `Paper/` folder with:
+A paper flow is one Canvas per published paper in the vault-wide `Paper/` folder, laid out for reading beside a research flow. Build it from the Zotero item's stored PDF, or from a reviewed JSON spec:
+
+```bash
+python zotero_bridge.py paper-flow <project-folder> <item-key> [--spec-output flow.json] [--contributions b2,b3 | --no-contributions] [--replace]
+python obs_paper.py paper-flow-build <project-folder> <paper-flow-spec.json> [--replace]
+```
 
 ```json
 {
@@ -86,20 +91,37 @@ After verifying the Zotero stored PDF, create one sentence-level Canvas in the v
   "item_key": "ZOTERO1",
   "sections": [
     {
-      "key": "intro",
+      "key": "s1",
       "title": "Introduction",
       "blocks": [
-        {"key": "s1", "kind": "sentence", "paragraph": "p1", "text": "First original sentence."},
-        {"key": "s2", "kind": "sentence", "paragraph": "p1", "text": "Second original sentence."},
-        {"key": "sub", "kind": "heading", "level": 1, "text": "Background"},
-        {"key": "eq", "kind": "equation", "text": "$$x=1$$"}
+        {"key": "b1", "kind": "paragraph", "text": "A whole paragraph of the paper."},
+        {"key": "b2", "kind": "paragraph", "role": "contribution", "text": "In this paper we propose ..."},
+        {"key": "b3", "kind": "heading", "level": 1, "text": "Background"},
+        {"key": "b4", "kind": "caption", "text": "Figure 1: ..."},
+        {"key": "b5", "kind": "equation", "text": "$$x=1$$"}
       ]
     }
   ]
 }
 ```
 
-A manuscript `heading` block also takes `level` of `section`, `subsection`, or `paragraph`, which sets its colour; headings are never numbered. Blocks use `heading`, `sentence`, or `equation`; sentences require a stable paragraph key, headings may use indentation `level`, and equations require `$$` delimiters. `paper-flow-build` accepts only a reviewed JSON spec, creates `<Vault>/Paper/<sanitized full title>.canvas`, refuses a conflicting overwrite, and links its source card to Zotero. `--replace` intentionally rebuilds after copying the old Canvas to `Paper/.canvas-history/`. Automated PDF parsing is suspended and must not be invoked. A future PDF-flow workflow must use semantic prose blocks and inherit only the `paper` color grammar rather than the manuscript's sentence-splitting rule.
+Blocks use `heading`, `paragraph`, `caption`, `sentence`, or `equation`. A `paragraph` is one semantic prose block and one card; `sentence` remains for hand-written specs and requires a stable `paragraph` key; equations require `$$` delimiters. A flow `heading` takes an integer `level`, its depth below the section, which indents it and the blocks under it. (A manuscript `heading` block in `insert_blocks` instead takes `level` of `section`, `subsection`, or `paragraph`, which sets its colour.) Only the `paper` colour grammar applies: the title, section titles, and headings are purple `"6"`, a `paragraph` or `sentence` with `role: "contribution"` is green `"4"`, and everything else has no colour. Extra fields such as `page` are ignored.
+
+Each top-level section is one column 812px wide, 120px apart, with card heights from `estimate_text_height`, so no two cards overlap. All cards sit in one group labelled `paper_flow · <title>`, and a source card with the `\cite` command and Zotero link points at the title card. `paper-flow-build` creates `<Vault>/Paper/<sanitized full title>.canvas`, refuses a conflicting overwrite, and `--replace` rebuilds after copying the old Canvas to `Paper/.canvas-history/`. The result's `paper_flow` (the same value as `vault_link`) is what `link_literature` takes as `paper_flow`.
+
+### From a PDF
+
+`paper-flow` reads the Zotero stored PDF with `pdfplumber`, takes the title from Zotero metadata and the citation key from Better BibTeX or Zotero, and never splits a sentence.
+
+Headings come from font size and weight. Abstract, References, Bibliography, Acknowledgments, and Appendix are top-level sections. A numbered line (`3`, `3.2`) in bold or a larger font takes its depth from the number of dots; an unnumbered line at least 1.5pt above body size takes its depth from its font-size tier; a fully bold body-size line sits one tier below. Depth 0 opens a section column. References and Bibliography are left out of the flow.
+
+Before blocks are built, page numbers and running headers or footers are dropped: a line in the top or bottom 8% of a page that is a page number, or whose text (digits ignored) recurs in that band on two or more pages. On page 1 the lines in the largest font are the title, and everything before the first heading after it, usually the author block, is skipped.
+
+A heading closes the open block. Otherwise a line starts a new block when (1) it starts a caption (`Figure 3:`, `Fig. 3.`, `Table 2:`) or a list item (`1)`, `2.`, `(a)`, bullet, dash); (2) its font size differs from the previous line by more than 0.5pt; (3) on the same page and column it sits more than 1.4 line pitches below the previous line, the pitch being the median spacing of body lines; or (4) the previous line ends in `.`, `?`, `!`, or `:` and either this line is indented by 0.8 body-font sizes past the column's left edge or the previous line stops two body-font sizes short of the right edge. Rule 3 does not apply across a page or column break. Lines join with spaces; a line ending in `-` before a lowercase letter joins without the hyphen. A block starting like a caption is kind `caption`, every other block `paragraph`.
+
+Contribution cards are marked, not decided. In the top-level section whose title contains "Introduction", a paragraph containing `we propose`, `we introduce`, `we present`, `our contribution(s)`, `main`/`key`/`primary contribution(s)`, `contributions of this paper/work`, or `this paper/work proposes/introduces/presents` is green, and so are list items directly after it. The result lists the marked keys under `contributions`. The author reviews them: rerun with `--contributions b2,b3` to colour exactly those paragraph keys, `--no-contributions` to leave everything uncoloured, or edit `role` in the `--spec-output` file and rebuild with `paper-flow-build --replace`.
+
+Limits. Column detection is per page and assumes one or two columns; a full-width title, figure, or table on a two-column page is split at the midline, and three-column layouts are read in the wrong order. Text inside figures becomes stray paragraphs. Equations are left as extracted text inside the surrounding block, never as `equation` cards. A compound word broken at its own hyphen loses the hyphen. A paragraph whose last line happens to fill the column and whose next line is neither indented nor spaced apart is merged with the next one. A PDF with no text layer (a scan) or no detectable headings fails with an error rather than producing a partial flow; OCR it first. Reading a stored PDF needs Zotero Desktop on the same machine, not web mode.
 
 ## Safe execution
 

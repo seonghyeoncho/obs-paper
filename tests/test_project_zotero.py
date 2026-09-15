@@ -20,8 +20,13 @@ from obs_project import (  # noqa: E402
     resolve_vault,
     standardize_project,
 )
-from pdf_to_flow import _join_lines, _sentences, Line  # noqa: E402
-from obs_paper_engine import CanvasDocument  # noqa: E402
+from pdf_to_flow import Line, _join_lines, build_from_pdf, page_lines, parse_pdf  # noqa: E402
+from obs_paper_engine import CanvasDocument, apply_patch, compile_request, node_rect, rects_overlap  # noqa: E402
+
+try:
+    import pdfplumber  # noqa: F401
+except ImportError:  # the PDF tests need it; everything else does not
+    pdfplumber = None
 from zotero_bridge import (  # noqa: E402
     ZoteroClient,
     ZoteroError,
@@ -249,15 +254,48 @@ class ProjectZoteroTest(unittest.TestCase):
             self.assertEqual(equation["x"], setup["x"])
             self.assertTrue(all(edge["fromNode"] in document.node_map() and edge["toNode"] in document.node_map() for edge in document.edges))
 
-    def test_pdf_text_cleanup_preserves_sentences(self) -> None:
+    def test_pdf_line_join_removes_line_break_hyphens_and_keeps_sentences_together(self) -> None:
         lines = [
-            Line("A multi-agent architec-", 1, 0, 10, 0, 10, 9, 0),
-            Line("ture works e.g. under failure.", 1, 0, 20, 0, 10, 9, 0),
-            Line("It recovers.", 1, 0, 30, 8, 10, 9, 0),
+            Line("A multi-agent architec-", 1, 0, 10, 19, 72, 300, 9, 0),
+            Line("ture works e.g. under failure.", 1, 0, 20, 29, 72, 280, 9, 0),
+            Line("It recovers.", 1, 0, 30, 39, 80, 140, 9, 0),
         ]
-        text = _join_lines(lines)
-        self.assertEqual(text, "A multi-agent architecture works e.g. under failure. It recovers.")
-        self.assertEqual(_sentences(text), ["A multi-agent architecture works e.g. under failure.", "It recovers."])
+        self.assertEqual(_join_lines(lines), "A multi-agent architecture works e.g. under failure. It recovers.")
+
+    def test_two_column_page_is_read_column_by_column(self) -> None:
+        def word(text: str, x0: float, top: float) -> dict[str, object]:
+            return {"text": text, "x0": x0, "x1": x0 + 40, "top": top, "bottom": top + 10, "size": 10, "fontname": "Times"}
+
+        words = []
+        for row in range(8):
+            top = 100 + 12 * row
+            words += [word(f"l{row}a", 60, top), word(f"l{row}b", 105, top), word(f"l{row}c", 150, top), word(f"l{row}d", 195, top)]
+            words += [word(f"r{row}a", 330, top), word(f"r{row}b", 375, top)]
+        lines = page_lines(words, 1, 612)
+        self.assertEqual([line.column for line in lines], [0] * 8 + [1] * 8)
+        self.assertEqual(lines[8].text, "r0a r0b")
+
+    def test_paper_flow_colours_paragraph_roles_and_rejects_green_headings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            vault = root / "NLP"
+            vault.mkdir()
+            project = Path(init_project(vault, "Demo")["root"])
+            spec = root / "flow.json"
+            blocks = [
+                {"key": "b1", "kind": "paragraph", "text": "Ordinary paragraph."},
+                {"key": "b2", "kind": "paragraph", "role": "contribution", "text": "We propose a thing."},
+                {"key": "b3", "kind": "caption", "text": "Figure 1: A thing."},
+            ]
+            spec.write_text(json.dumps({"title": "T", "citekey": "k", "item_key": "I", "sections": [{"key": "s1", "title": "Intro", "blocks": blocks}]}), encoding="utf-8")
+            document = CanvasDocument.load(Path(build_paper_flow(project, spec)["canvas"]))
+            colours = {node.get("text"): node.get("color") for node in document.nodes}
+            self.assertEqual((colours["Ordinary paragraph."], colours["We propose a thing."], colours["Figure 1: A thing."]), (None, "4", None))
+            blocks[0]["kind"] = "heading"
+            blocks[0]["role"] = "contribution"
+            spec.write_text(json.dumps({"title": "T", "citekey": "k", "item_key": "I", "sections": [{"key": "s1", "title": "Intro", "blocks": blocks}]}), encoding="utf-8")
+            with self.assertRaisesRegex(ProjectError, "contribution"):
+                build_paper_flow(project, spec, replace=True)
 
     def test_zotero_citation_and_canvas_link(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -373,6 +411,186 @@ class ProjectZoteroTest(unittest.TestCase):
             self.assertFalse((project / "papers").exists())
             self.assertFalse(hasattr(client, "exported_collection"))
             self.assertEqual((project / "references.bib").read_text(encoding="utf-8"), "")
+
+
+def _pdf_string(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def write_pdf(path: Path, pages: list[list[tuple[str, float, float, float, bool]]]) -> Path:
+    """Write a minimal PDF: each page is a list of (text, x, baseline y, size, bold)."""
+    objects: list[bytes] = [b"", b""]
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+    kids: list[int] = []
+    for page in pages:
+        stream = "".join(
+            f"BT /{'F2' if bold else 'F1'} {size} Tf {x} {y} Td ({_pdf_string(text)}) Tj ET\n"
+            for text, x, y, size, bold in page
+        ).encode("latin-1")
+        kids.append(len(objects) + 1)
+        objects.append(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            f"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {len(objects) + 2} 0 R >>".encode()
+        )
+        objects.append(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"endstream")
+    objects[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
+    objects[1] = ("<< /Type /Pages /Kids [" + " ".join(f"{kid} 0 R" for kid in kids) + f"] /Count {len(kids)} >>").encode()
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
+    path.write_bytes(bytes(out))
+    return path
+
+
+PAPER_TITLE = "Semantic Blocks for Reading Papers"
+PAPER_PAGES = [
+    [
+        ("Preprint. Under review.", 72, 760, 8, False),
+        (PAPER_TITLE, 72, 690, 18, True),
+        ("Ada Lovelace, Example University", 72, 665, 10, False),
+        ("1 Introduction", 72, 630, 14, True),
+        ("Reading a paper on a canvas needs units that are larger than one", 84, 605, 10, False),
+        ("sentence, because an argument spans several of them. The architec-", 72, 593, 10, False),
+        ("ture of a paragraph, e.g. its claim and support, should survive.", 72, 581, 10, False),
+        ("In this paper we propose a block builder that keeps paragraphs whole", 84, 569, 10, False),
+        ("and marks contribution statements. Our contributions are as follows:", 72, 557, 10, False),
+        ("1) a paragraph rule that never splits a sentence into cards,", 84, 545, 10, False),
+        ("2) a colour pass that marks candidate contribution paragraphs.", 84, 533, 10, False),
+        ("Prior tools split every sentence into its own card, which scatters", 72, 509, 10, False),
+        ("one line of reasoning across many cards and hides its structure.", 72, 497, 10, False),
+        ("1", 300, 40, 9, False),
+    ],
+    [
+        ("Preprint. Under review.", 72, 760, 8, False),
+        ("2 Method", 72, 700, 14, True),
+        ("2.1 Line grouping", 72, 675, 11, True),
+        ("Words are grouped into lines by their vertical position on the page", 72, 650, 10, False),
+        ("and lines are joined into blocks by gap, indentation, and line ends.", 72, 638, 10, False),
+        ("Figure 1: Blocks built from the first page of this paper.", 72, 614, 9, False),
+        ("The builder we introduce never splits a paragraph at a full stop. It", 72, 590, 10, False),
+        ("keeps both sentences of this paragraph in one card.", 72, 578, 10, False),
+        ("2", 300, 40, 9, False),
+    ],
+]
+
+
+@unittest.skipIf(pdfplumber is None, "pdfplumber is not installed")
+class PdfFlowTest(unittest.TestCase):
+    def test_blocks_headings_and_contribution_marks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pdf = write_pdf(Path(directory) / "paper.pdf", PAPER_PAGES)
+            spec, stats = parse_pdf(pdf, title=PAPER_TITLE, citekey="lovelace2026", item_key="ABCD1234")
+        self.assertEqual((stats["pages"], stats["dropped_lines"], stats["pdf_title"]), (2, 4, PAPER_TITLE))
+        self.assertEqual([section["title"] for section in spec["sections"]], ["Introduction", "Method"])
+        intro, method = (section["blocks"] for section in spec["sections"])
+        self.assertEqual([block["kind"] for block in intro], ["paragraph"] * 5)
+        self.assertEqual(intro[0]["text"], (
+            "Reading a paper on a canvas needs units that are larger than one sentence, because an argument "
+            "spans several of them. The architecture of a paragraph, e.g. its claim and support, should survive."
+        ))
+        self.assertEqual(intro[1]["text"], (
+            "In this paper we propose a block builder that keeps paragraphs whole and marks contribution "
+            "statements. Our contributions are as follows:"
+        ))
+        self.assertTrue(intro[2]["text"].startswith("1) ") and intro[3]["text"].startswith("2) "))
+        self.assertTrue(intro[4]["text"].startswith("Prior tools") and intro[4]["text"].endswith("hides its structure."))
+        self.assertEqual([block["kind"] for block in method], ["heading", "paragraph", "caption", "paragraph"])
+        self.assertEqual((method[0]["level"], method[0]["text"]), (1, "Line grouping"))
+        self.assertEqual(method[2]["text"], "Figure 1: Blocks built from the first page of this paper.")
+        self.assertEqual(method[3]["text"], (
+            "The builder we introduce never splits a paragraph at a full stop. It keeps both sentences of this paragraph in one card."
+        ))
+        every_text = " ".join(block["text"] for section in spec["sections"] for block in section["blocks"])
+        for dropped in ("Preprint", PAPER_TITLE, "Lovelace"):
+            self.assertNotIn(dropped, every_text)
+        self.assertFalse(any(block["text"] in {"1", "2"} for section in spec["sections"] for block in section["blocks"]))
+        self.assertEqual(stats["contributions"], [intro[1]["key"], intro[2]["key"], intro[3]["key"]])
+        self.assertNotIn("role", method[3])
+
+    def test_canvas_is_valid_grouped_coloured_and_linkable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            vault = root / "NLP"
+            vault.mkdir()
+            project = Path(init_project(vault, "Demo")["root"])
+            pdf = write_pdf(root / "paper.pdf", PAPER_PAGES)
+            result = build_from_pdf(project, pdf, title=PAPER_TITLE, citekey="lovelace2026", item_key="ABCD1234")
+            self.assertEqual(result["paper_flow"], f"Paper/{PAPER_TITLE}.canvas")
+            self.assertTrue((vault / result["paper_flow"]).is_file())
+            document = CanvasDocument.load(Path(result["canvas"]))
+            document.validate_integrity()
+
+            groups = [node for node in document.nodes if node["type"] == "group"]
+            cards = [node for node in document.nodes if node["type"] != "group"]
+            self.assertEqual(len(groups), 1)
+            self.assertIn(PAPER_TITLE, groups[0]["label"])
+            self.assertTrue(all(node_rect(groups[0]).contains(card) for card in cards))
+            for index, left in enumerate(cards):
+                for right in cards[index + 1:]:
+                    self.assertFalse(rects_overlap(node_rect(left), node_rect(right)), (left["text"], right["text"]))
+
+            green = sorted(card["text"][:2] for card in cards if card.get("color") == "4")
+            self.assertEqual(green, ["1)", "2)", "In"])
+            for card in cards:
+                if card["text"].startswith("# "):
+                    self.assertEqual(card.get("color"), "6")
+                elif card.get("color") != "4":
+                    self.assertNotIn("color", card)
+            subheading = next(card for card in cards if card["text"] == "# Line grouping")
+            method = next(card for card in cards if card["text"] == "# Method")
+            self.assertEqual(subheading["x"], method["x"] + 40)
+            intro_column = next(card for card in cards if card["text"] == "# Introduction")
+            self.assertGreater(method["x"], intro_column["x"] + intro_column["width"])
+
+            research = root / "research.canvas"
+            research.write_text(json.dumps({"nodes": [
+                {"id": "flow", "type": "group", "x": 0, "y": 0, "width": 3000, "height": 1200, "label": "Research Flow"},
+                {"id": "rq", "type": "text", "x": 1200, "y": 600, "width": 560, "height": 120, "text": "# RQ1", "color": "6"},
+            ], "edges": []}), encoding="utf-8")
+            apply_patch(research, compile_request(research, {
+                "schema_version": 1,
+                "workflow": "research-flow",
+                "target": {"group_label": "Research Flow"},
+                "actions": [{
+                    "op": "link_literature", "key": "lovelace-rq1", "target_id": "rq", "title": PAPER_TITLE,
+                    "citekey": result["citekey"], "item_key": result["item_key"], "paper_flow": result["paper_flow"],
+                }],
+            }))
+            self.assertTrue(any(f"[[{result['paper_flow']}|Paper flow]]" in node.get("text", "") for node in CanvasDocument.load(research).nodes))
+
+    def test_override_and_replace_keep_history(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            vault = root / "NLP"
+            vault.mkdir()
+            project = Path(init_project(vault, "Demo")["root"])
+            pdf = write_pdf(root / "paper.pdf", PAPER_PAGES)
+            arguments = {"title": PAPER_TITLE, "citekey": "lovelace2026", "item_key": "ABCD1234"}
+            build_from_pdf(project, pdf, **arguments)
+            with self.assertRaisesRegex(ProjectError, "different content"):
+                build_from_pdf(project, pdf, contributions=[], **arguments)
+            replaced = build_from_pdf(project, pdf, contributions=["b5"], replace=True, spec_output=root / "flow.json", **arguments)
+            self.assertEqual((replaced["status"], replaced["contributions"], replaced["contribution_source"]), ("replaced", ["b5"], "override"))
+            self.assertEqual(len(list((vault / "Paper" / ".canvas-history").glob("*.canvas"))), 1)
+            green = [node["text"] for node in CanvasDocument.load(Path(replaced["canvas"])).nodes if node.get("color") == "4"]
+            self.assertEqual(len(green), 1)
+            self.assertTrue(green[0].startswith("Prior tools"))
+            self.assertIn('"role": "contribution"', (root / "flow.json").read_text(encoding="utf-8"))
+            with self.assertRaisesRegex(ProjectError, "b6"):
+                parse_pdf(pdf, contributions=["b6"], **arguments)
+
+    def test_pdf_without_text_layer_fails_clearly(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pdf = write_pdf(Path(directory) / "scan.pdf", [[]])
+            with self.assertRaisesRegex(ProjectError, "no usable text layer"):
+                parse_pdf(pdf, title="Scan", citekey="scan", item_key="SCAN")
 
 
 if __name__ == "__main__":

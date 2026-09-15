@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from obs_paper_engine import estimate_text_height
 from record_action import append_action
 
 
@@ -369,6 +370,11 @@ def set_frontmatter_value(path: Path, key: str, value: str) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+FLOW_BLOCK_KINDS = frozenset({"heading", "paragraph", "caption", "sentence", "equation"})
+FLOW_COLUMN = 812
+FLOW_COLUMN_GAP = 120
+
+
 def _paper_flow_filename(title: str) -> str:
     value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', " - ", title)
     value = re.sub(r"\s+", " ", value).strip(" .")
@@ -381,14 +387,6 @@ def _paper_flow_id(title: str, key: str) -> str:
     return hashlib.sha256(f"{title}\0{key}".encode("utf-8")).hexdigest()[:16]
 
 
-def _paper_flow_height(text: str, width: int, *, heading: bool = False) -> int:
-    if heading:
-        return 70
-    chars_per_line = max(20, width // 8)
-    lines = sum(max(1, (len(line) + chars_per_line - 1) // chars_per_line) for line in text.splitlines())
-    return max(70, ((40 + 20 * lines + 9) // 10) * 10)
-
-
 def _vault_root(project: Path) -> Path:
     if project.parent.name != "Projects":
         raise ProjectError(f"project must be directly under a Projects folder: {project}")
@@ -396,7 +394,14 @@ def _vault_root(project: Path) -> Path:
 
 
 def build_paper_flow(project: Path, spec_path: Path, *, replace: bool = False) -> dict[str, Any]:
-    """Create one sentence-level paper Canvas in the vault-wide Paper library."""
+    """Create one paper-flow Canvas in the vault-wide Paper library.
+
+    A spec written from a PDF uses `paragraph` and `caption` blocks, one card per
+    semantic prose block; a hand-written spec may still use `sentence` blocks with
+    a paragraph key. Headings are purple, blocks with `role: contribution` green,
+    and every other card uncoloured. Each top-level section is one column, and a
+    heading's depth indents it and its blocks while their right edge stays put.
+    """
     project = project.resolve()
     metadata = project / "project.md"
     if not metadata.is_file():
@@ -429,8 +434,14 @@ def build_paper_flow(project: Path, spec_path: Path, *, replace: bool = False) -
             raise ProjectError("paper flow block keys must be unique within a section")
         for block in section["blocks"]:
             kind, text = block.get("kind"), block.get("text")
-            if kind not in {"heading", "sentence", "equation"} or not isinstance(text, str) or not text.strip():
-                raise ProjectError("paper flow blocks need kind heading, sentence, or equation and non-empty text")
+            if kind not in FLOW_BLOCK_KINDS or not isinstance(text, str) or not text.strip():
+                raise ProjectError(
+                    "paper flow blocks need kind heading, paragraph, caption, sentence, or equation and non-empty text"
+                )
+            if block.get("role", "ordinary") not in {"ordinary", "contribution"}:
+                raise ProjectError("paper flow block role must be ordinary or contribution")
+            if block.get("role") == "contribution" and kind not in {"paragraph", "sentence"}:
+                raise ProjectError("only paragraph and sentence blocks can be contribution cards")
             if kind == "sentence" and not isinstance(block.get("paragraph"), str):
                 raise ProjectError("paper flow sentence blocks need a paragraph key")
             if kind == "equation" and not (text.strip().startswith("$$") and text.strip().endswith("$$")):
@@ -448,25 +459,29 @@ def build_paper_flow(project: Path, spec_path: Path, *, replace: bool = False) -
     )
     title_id = _paper_flow_id(title, "title")
     source_id = _paper_flow_id(title, "source")
-    title_width = len(sections) * 812 + max(0, len(sections) - 1) * 120
+    title_width = len(sections) * FLOW_COLUMN + max(0, len(sections) - 1) * FLOW_COLUMN_GAP
+    title_text = f"# {title}"
+    title_height = estimate_text_height(title_text, title_width, "heading")
+    top = 20 + title_height + 20
     nodes: list[dict[str, Any]] = [
-        {"id": title_id, "type": "text", "x": 620, "y": 20, "width": title_width, "height": 70, "text": f"# {title}", "color": "6"},
-        {"id": source_id, "type": "text", "x": 20, "y": 110, "width": 560, "height": _paper_flow_height(source_text, 560), "text": source_text},
+        {"id": title_id, "type": "text", "x": 620, "y": 20, "width": title_width, "height": title_height, "text": title_text, "color": "6"},
+        {"id": source_id, "type": "text", "x": 20, "y": top, "width": 560, "height": estimate_text_height(source_text, 560, "paragraph"), "text": source_text},
     ]
     for section_index, section in enumerate(sections):
-        x, y = 620 + section_index * (812 + 120), 110
+        x, y = 620 + section_index * (FLOW_COLUMN + FLOW_COLUMN_GAP), top
+        section_text = f"# {section['title'].strip().lstrip('# ').strip()}"
         heading = {
             "id": _paper_flow_id(title, f"section-{section['key']}"),
             "type": "text",
             "x": x,
             "y": y,
-            "width": 812,
-            "height": 70,
-            "text": f"# {section['title'].strip().lstrip('# ').strip()}",
+            "width": FLOW_COLUMN,
+            "height": estimate_text_height(section_text, FLOW_COLUMN, "heading"),
+            "text": section_text,
             "color": "6",
         }
         nodes.append(heading)
-        y += 90
+        y += heading["height"] + 20
         previous_paragraph: str | None = None
         current_level = 0
         for block in section["blocks"]:
@@ -479,7 +494,7 @@ def build_paper_flow(project: Path, spec_path: Path, *, replace: bool = False) -
                 if previous_paragraph is not None and paragraph != previous_paragraph:
                     y += 20
                 previous_paragraph = paragraph
-                rendered, color = raw, None
+                rendered, color = raw, "4" if block.get("role") == "contribution" else None
             elif kind == "heading":
                 if nodes[-1] is not heading:
                     y += 20
@@ -487,16 +502,18 @@ def build_paper_flow(project: Path, spec_path: Path, *, replace: bool = False) -
                 current_level = level
                 previous_paragraph = None
             else:
-                rendered, color = raw, None
+                rendered = raw
+                color = "4" if block.get("role") == "contribution" else None
                 previous_paragraph = None
-            width = 812
+            indent = 40 * min(level, 10)
+            width = FLOW_COLUMN - indent
             after: dict[str, Any] = {
                 "id": _paper_flow_id(title, f"{section['key']}-{block['key']}"),
                 "type": "text",
-                "x": x + 40 * level,
+                "x": x + indent,
                 "y": y,
                 "width": width,
-                "height": _paper_flow_height(rendered, width, heading=kind == "heading"),
+                "height": estimate_text_height(rendered, width, kind if kind in {"heading", "equation"} else "paragraph"),
                 "text": rendered,
             }
             if color:
@@ -542,7 +559,7 @@ def build_paper_flow(project: Path, spec_path: Path, *, replace: bool = False) -
             action="build-paper-flow",
             target=str(canvas),
             reason=f"{citekey}; Zotero item {item_key}",
-            result=f"{status.title()} sentence-level Canvas with {len(nodes)} nodes and {len(edges)} edge"
+            result=f"{status.title()} paper-flow Canvas with {len(nodes)} nodes and {len(edges)} edge"
             + (f"; backup: {backup}" if backup else ""),
         )
     return {

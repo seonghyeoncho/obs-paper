@@ -17,7 +17,7 @@ from urllib.parse import quote, urlencode, urljoin, urlparse, unquote
 from urllib.request import Request, urlopen
 
 from obs_paper_engine import apply_patch, compile_request
-from obs_project import _frontmatter_value, set_frontmatter_value
+from obs_project import ProjectError, _frontmatter_value, set_frontmatter_value
 from record_action import append_action
 
 
@@ -627,6 +627,14 @@ def main() -> None:
     link.add_argument("--item-key", required=True)
     link.add_argument("--lane", choices=("left", "right"), default="right")
     link.add_argument("--log", type=Path)
+    flow = commands.add_parser("paper-flow", help="build <Vault>/Paper/<title>.canvas from the item's stored PDF")
+    flow.add_argument("project", type=Path)
+    flow.add_argument("item_key")
+    flow.add_argument("--replace", action="store_true")
+    flow.add_argument("--spec-output", type=Path)
+    marks = flow.add_mutually_exclusive_group()
+    marks.add_argument("--contributions", help="comma-separated paragraph block keys to colour green instead of the phrase match")
+    marks.add_argument("--no-contributions", action="store_true")
     args = parser.parse_args()
     client = ZoteroClient(args.base_url)
     try:
@@ -665,10 +673,26 @@ def main() -> None:
             _emit({"item_key": args.item_key, "zotero_pdf": str(client.import_pdf(args.item_key, args.pdf))})
         elif args.command == "add":
             _emit(add_paper(args.project, args.metadata, args.pdf, client, export=not args.defer_export))
+        elif args.command == "paper-flow":
+            from pdf_to_flow import build_from_zotero
+
+            contributions = (
+                [] if args.no_contributions
+                else [key.strip() for key in args.contributions.split(",") if key.strip()] if args.contributions
+                else None
+            )
+            _emit(build_from_zotero(
+                args.project,
+                args.item_key,
+                client=client,
+                replace=args.replace,
+                spec_output=args.spec_output,
+                contributions=contributions,
+            ))
         else:
             target = {"group_id": args.group_id} if args.group_id else {"group_label": args.group_label}
             _emit(link_canvas(args.canvas, target=target, sentence_id=args.sentence_id, item_key=args.item_key, lane=args.lane, log=args.log, client=client))
-    except (ZoteroError, OSError, json.JSONDecodeError) as exc:
+    except (ZoteroError, ProjectError, OSError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
 
 

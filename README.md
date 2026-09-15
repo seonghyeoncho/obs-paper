@@ -9,7 +9,7 @@ It provides nine skills:
 - `paper`: sentence-level manuscript layout inside versioned paper groups
 - `research-flow`: RQ, experiment, evidence, and interpretation graphs
 - `node`: answer questions about specific cards addressed by their node IDs, fetched by direct lookup
-- `literature-flow`: RQ-targeted search, Zotero PDF ingestion, and citation mapping; PDF-to-flow conversion is suspended
+- `literature-flow`: RQ-targeted search, Zotero PDF ingestion, citation mapping, and paragraph-level paper-flow Canvases built from stored PDFs
 - `rebuttal`: reviewer comments organized from source text through final English response
 - `camera-ready-mapping`: non-destructive mapping from rebuttal promises to manuscript targets
 - `camera-ready`: final manuscript generation from a completed mapping, with yellow diff nodes and explicit blockers
@@ -74,12 +74,13 @@ python plugins/obspaper/scripts/zotero_bridge.py search "paper title"
 python plugins/obspaper/scripts/zotero_bridge.py record-search "/path/to/vault/Projects/My Project" search.json
 python plugins/obspaper/scripts/zotero_bridge.py attach ZOTERO_ITEM_KEY paper.pdf
 python plugins/obspaper/scripts/zotero_bridge.py audit "/path/to/vault/Projects/My Project"
-python plugins/obspaper/scripts/obs_paper.py paper-flow-build "/path/to/vault/Projects/My Project" paper-flow.json
+python plugins/obspaper/scripts/zotero_bridge.py paper-flow "/path/to/vault/Projects/My Project" ZOTERO_ITEM_KEY --spec-output paper-flow.json
+python plugins/obspaper/scripts/obs_paper.py paper-flow-build "/path/to/vault/Projects/My Project" paper-flow.json --replace
 ```
 
 The configured path is stored per host in `~/.config/obs-paper/config.json`, outside Obsidian Sync. Set `OBS_PAPER_VAULT` to override it temporarily.
 
-Each project uses an exact-name Zotero Collection as its literature source of truth. Selected papers and their stored PDF attachments live in Zotero, vault-wide sentence-level paper Canvases live under `Paper/`, only the project Collection is exported to `references.bib`, and searches are appended to `searches.jsonl`. No paper PDF is copied into Obsidian. Export is blocked if it would remove a citation key already used by the project. The Zotero bridge uses the desktop Local API. Reads require no account API key; Zotero 10+ writes request approval in Zotero at runtime. Because that API answers on `localhost:23119` only, a machine without Zotero Desktop — a remote server — sets `ZOTERO_USER_ID` and `ZOTERO_API_KEY` to reach the library over zotero.org instead. Web mode searches, cites, and exports BibTeX; storing and reading PDFs stays on the desktop that holds the files. Better BibTeX is optional and preferred for stable LaTeX citation keys. External scholarly search remains separate from Zotero library search.
+Each project uses an exact-name Zotero Collection as its literature source of truth. Selected papers and their stored PDF attachments live in Zotero, vault-wide paper-flow Canvases, one card per heading or paragraph, live under `Paper/`, only the project Collection is exported to `references.bib`, and searches are appended to `searches.jsonl`. No paper PDF is copied into Obsidian. Export is blocked if it would remove a citation key already used by the project. The Zotero bridge uses the desktop Local API. Reads require no account API key; Zotero 10+ writes request approval in Zotero at runtime. Because that API answers on `localhost:23119` only, a machine without Zotero Desktop — a remote server — sets `ZOTERO_USER_ID` and `ZOTERO_API_KEY` to reach the library over zotero.org instead. Web mode searches, cites, and exports BibTeX; storing and reading PDFs stays on the desktop that holds the files. Better BibTeX is optional and preferred for stable LaTeX citation keys. External scholarly search remains separate from Zotero library search. Building a paper flow from a PDF needs `pdfplumber` (`python -m pip install pdfplumber`); a scanned PDF without a text layer is refused.
 
 ## Deterministic Canvas CLI
 
