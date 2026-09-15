@@ -60,7 +60,7 @@ Allowed mapping statuses are `wording`, `ready`, `pending`, `author input`, and 
 
 `add_research_flow` requires keyed `nodes` and explicit two-key `links`. Maintenance uses `edit_text` and `remove_items`.
 
-- Ordinary node: `key`, `kind`, `text`, `x`, `y`; optional geometry and `stream`.
+- Ordinary node: `key`, `kind`, `text`, `x`, `y`; optional geometry and `stream`. Leave out `height` unless the card has been measured in Obsidian: the handler sizes a card from its text, and a height copied from an estimate overrides that and goes stale when the estimate is corrected. This matters most for cards holding a table (`table`, `implementation`, `params`, `log`).
 - `kind` is one of `rq`, `experiment`, `answer`, `bridge`, `thought` (coloured, in the flow) or `source`, `table`, `figure`, `implementation`, `params`, `log` (uncoloured side cards). Flow kinds get an H1 prefix when the text has no heading; side cards, bridges, and thoughts keep their text verbatim.
 - `implementation`: one per experiment, a two-column table of run grid, paths, commands, commits, and outputs, optionally followed by a `**추가 메모**` paragraph. `params`: one per project, the thresholds and model names that hold across experiments. `log`: a run that produced no usable evidence. Record why it was discarded and where its outputs are, but not its measurements: a discarded number is not worth keeping. A discarded run never stays a green experiment in the flow. See `skills/research-flow/references/content-structure.md`.
 - Figure: supply `file`, `width`, and `height` instead of `text`. A figure is a file node, so it takes no text and is the one kind that does not need any.

@@ -1253,11 +1253,22 @@ class ObsPaperEngineTest(unittest.TestCase):
 
         one_row = "| a | b |\n|---|---|\n| 1 | 2 |"
         two_rows = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
-        self.assertEqual(
+        self.assertIn(
             estimate_text_height(two_rows, 560, "paragraph") - estimate_text_height(one_row, 560, "paragraph"),
-            35,
+            (32, 33),
             "one more table row adds a row's height",
         )
+
+        def table_card(rows: int) -> str:
+            body = "\n".join(f"| v{row} | w{row} | x{row} |" for row in range(rows))
+            return f"### Table — 요약\n\n| a | b | c |\n|---|---|---|\n{body}\n\n`4dab385c42611a22`"
+
+        # Heights of these cards rendered with Obsidian's stylesheet at the 18px text size.
+        for rows, rendered in ((1, 202), (8, 429), (17, 720)):
+            self.assertLessEqual(
+                abs(estimate_text_height(table_card(rows), 812, "paragraph") - rendered), 1,
+                f"a table card with {rows} body rows renders {rendered}px tall",
+            )
 
         without_rule = "| a | b |\n| 1 | 2 |"
         self.assertEqual(

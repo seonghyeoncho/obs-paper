@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -242,7 +243,8 @@ def display_width(text: str) -> int:
 
 CARD_PADDING = 24  # chrome below the text; a card is text height plus this
 CARD_LINE = 27
-CARD_TABLE_ROW = 35
+CARD_TABLE_ROW = 32.4
+CARD_TABLE_EDGE = 5  # borders and spacing a table adds once, beyond its rows
 CARD_COLUMNS_PER_PX = 0.119
 
 
@@ -254,25 +256,38 @@ def estimate_text_height(text: str, width: int, kind: str) -> int:
     A heading is a line like any other — the old fixed 70px height made a
     one-line heading half again too tall and a multi-line card far too short.
 
-    Prose lands within a pixel. Tables do not: Obsidian sizes table columns to
-    their content, so a row's height is not a function of the text alone. The
-    estimate here is close but a table card still needs looking at.
+    A table row is shorter than 35. Obsidian sets table text at line-height 1.3
+    against 1.5 for prose, with 4px of cell padding above and below and a 1px
+    border: at the 18px text size that makes prose 27 a line, a row is 32.39.
+    Rendering `### Table` cards with Obsidian's own stylesheet gives 202px for
+    one body row and 720 for seventeen, which this lands on to a pixel. Rows
+    are summed before rounding so a long table does not gain a pixel per row.
+
+    That holds while no cell wraps. Obsidian sizes columns to their content, so
+    a cell long enough to wrap makes its row taller than the text can say, and
+    such a card still needs looking at.
     """
     if kind == "equation":
         return max(100, 40 + 30 * len(text.splitlines()))
     columns = max(12, int(width * CARD_COLUMNS_PER_PX))
-    height = CARD_PADDING
+    height: float = CARD_PADDING
+    in_table = False
     for line in text.splitlines() or [""]:
         stripped = line.strip()
         if _TABLE_RULE.match(stripped):
             continue  # the |---| rule renders as a border, not a row
         if stripped.startswith("|"):
+            if not in_table:
+                height += CARD_TABLE_EDGE
+            in_table = True
             height += CARD_TABLE_ROW
-        elif not stripped:
+            continue
+        in_table = False
+        if not stripped:
             height += CARD_LINE  # a blank line renders at full line height
         else:
             height += CARD_LINE * max(1, -(-display_width(stripped) // columns))
-    return max(CARD_PADDING + CARD_LINE, height)
+    return max(CARD_PADDING + CARD_LINE, math.ceil(height - 0.01))
 
 
 def estimate_mapping_height(text: str, width: int, *, title: bool = False) -> int:
