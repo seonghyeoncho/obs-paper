@@ -20,7 +20,7 @@ from obs_project import (  # noqa: E402
     resolve_vault,
     standardize_project,
 )
-from pdf_to_flow import Line, _join_lines, build_from_pdf, page_lines, parse_pdf  # noqa: E402
+from pdf_to_flow import Line, _heading, _join_lines, build_from_pdf, build_words, page_lines, parse_pdf  # noqa: E402
 from obs_paper_engine import CanvasDocument, apply_patch, compile_request, node_rect, rects_overlap  # noqa: E402
 
 try:
@@ -275,6 +275,28 @@ class ProjectZoteroTest(unittest.TestCase):
         self.assertEqual([line.column for line in lines], [0] * 8 + [1] * 8)
         self.assertEqual(lines[8].text, "r0a r0b")
 
+    def test_words_come_from_character_gaps_and_keep_subscripts_on_their_line(self) -> None:
+        def char(text: str, x0: float, width: float = 5, top: float = 100, size: float = 10, upright: bool = True) -> dict[str, object]:
+            return {"text": text, "x0": x0, "x1": x0 + width, "top": top, "bottom": top + size, "size": size, "fontname": "Times", "upright": upright}
+
+        chars = [char("T", 72), char("h", 77), char("e", 82), char("m", 89.5), char("o", 94.5), char("d", 99.7)]
+        chars += [char("i", 105, 2, top=106, size=6), char("7", 20, top=300, upright=False)]
+        self.assertEqual([word["text"] for word in build_words(chars, 10)], ["The", "modi"])
+
+    def test_headings_need_real_words_and_are_not_run_in_leads(self) -> None:
+        def line(text: str, size: float = 10, bold: float = 1.0) -> Line:
+            return Line(text, 1, 0, 100, 100 + size, 72, 300, size, bold)
+
+        self.assertEqual(
+            _heading(line("3.2.3 Applications of Attention in our Model"), 10, [], True),
+            (2, "Applications of Attention in our Model", "numbered"),
+        )
+        self.assertIsNone(_heading(line("A", size=24), 10, [24.0], True))
+        self.assertIsNone(_heading(line("C X", size=14), 10, [14.0], True))
+        self.assertIsNone(_heading(line("Masked LM and the Masking Procedure As-"), 10, [], True))
+        self.assertNotEqual(_heading(line("A.1 Illustration of the Tasks"), 10, [], True)[2], "numbered")
+        self.assertEqual(_heading(line("A.1 Illustration of the Tasks"), 10, [], True, appendix=True)[0], 1)
+
     def test_paper_flow_colours_paragraph_roles_and_rejects_green_headings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -413,25 +435,37 @@ class ProjectZoteroTest(unittest.TestCase):
             self.assertEqual((project / "references.bib").read_text(encoding="utf-8"), "")
 
 
-def _pdf_string(text: str) -> str:
+def _pdf_string(text: str) -> str:  # noqa: D103
     return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
 def write_pdf(path: Path, pages: list[list[tuple[str, float, float, float, bool]]]) -> Path:
-    """Write a minimal PDF: each page is a list of (text, x, baseline y, size, bold)."""
+    """Write a minimal PDF from (text, x, baseline y, size, font[, rotated]) items.
+
+    font is False for Helvetica, True for Helvetica-Bold, or "mono" for Courier.
+    A list of strings is drawn as one TJ run with kerning gaps and no space
+    characters; rotated text is turned 90 degrees like an arXiv side stamp.
+    """
     objects: list[bytes] = [b"", b""]
-    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
-    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+    for base in ("Helvetica", "Helvetica-Bold", "Courier"):
+        objects.append(f"<< /Type /Font /Subtype /Type1 /BaseFont /{base} /Encoding /WinAnsiEncoding >>".encode())
     kids: list[int] = []
     for page in pages:
-        stream = "".join(
-            f"BT /{'F2' if bold else 'F1'} {size} Tf {x} {y} Td ({_pdf_string(text)}) Tj ET\n"
-            for text, x, y, size, bold in page
-        ).encode("latin-1")
+        commands = []
+        for item in page:
+            text, x, y, size, font = item[:5]
+            name = "F3" if font == "mono" else "F2" if font else "F1"
+            place = f"0 1 -1 0 {x} {y} Tm" if len(item) > 5 and item[5] else f"{x} {y} Td"
+            if isinstance(text, list):
+                show = "[" + " -300 ".join(f"({_pdf_string(part)})" for part in text) + "] TJ"
+            else:
+                show = f"({_pdf_string(text)}) Tj"
+            commands.append(f"BT /{name} {size} Tf {place} {show} ET\n")
+        stream = "".join(commands).encode("latin-1")
         kids.append(len(objects) + 1)
         objects.append(
             f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-            f"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {len(objects) + 2} 0 R >>".encode()
+            f"/Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents {len(objects) + 2} 0 R >>".encode()
         )
         objects.append(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"endstream")
     objects[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
@@ -481,8 +515,88 @@ PAPER_PAGES = [
 ]
 
 
+TWO_COLUMN_PAGE = [
+    ("arXiv:2609.01234v1 [cs.CL] 15 Sep 2026", 36, 300, 14, False, True),
+    ("Reading Two Column Papers Without", 150, 740, 16, True),
+    ("Losing the Thread", 235, 721, 16, True),
+    ("Ada Lovelace and Grace Hopper", 215, 695, 12, False),
+    ("{ada,grace}@example.org", 235, 681, 12, False),
+    ("Abstract", 150, 650, 12, True),
+    ("We introduce a reader that keeps two", 72, 634, 10, False),
+    ("columns apart and joins each paragraph", 72, 622, 10, False),
+    ("into one card for the author to review.", 72, 610, 10, False),
+    ("1 Introduction", 72, 580, 12, True),
+    ("Papers set in two columns place their", 72, 562, 10, False),
+    ("lines side by side, so a reader that", 72, 550, 10, False),
+    ("groups words by height alone mixes the", 72, 538, 10, False),
+    ("two columns into nonsense and loses", 72, 526, 10, False),
+    ("the thread of every sentence it reads.", 72, 514, 10, False),
+    ("The right column continues with its own", 334, 568, 10, False),
+    ("paragraph, which must stay whole and", 322, 556, 10, False),
+    ("must not be interleaved with the left.", 322, 544, 10, False),
+    ("Input =", 322, 520, 10, False),
+    (["Tight", "kerning", "still", "yields", "separate", "words", "and"], 322, 496, 10, False),
+    ("the paragraph ends on this short line.", 322, 484, 10, False),
+    ("System", 100, 440, 10, False), ("Acc", 400, 440, 10, False), ("F1", 480, 440, 10, False),
+    ("Baseline", 100, 428, 10, False), ("71.2", 400, 428, 10, False), ("68.4", 480, 428, 10, False),
+    ("Reader", 100, 416, 10, False), ("84.6", 400, 416, 10, False), ("80.1", 480, 416, 10, False),
+    ("Table 1: Accuracy of the reader against a baseline on two column pages.", 72, 396, 10, False),
+    ("encoder to decoder", 330, 370, 10, "mono"),
+    ("1", 306, 40, 10, False),
+]
+UNHEADED_ABSTRACT_PAGE = [
+    ("Unheaded Abstracts Still Count", 72, 720, 18, True),
+    ("Grace Hopper, Example Laboratory", 72, 695, 10, False),
+    ("grace@example.org", 72, 683, 10, False),
+    ("This paper presents a reader that keeps an abstract even when the", 72, 650, 10, False),
+    ("template prints no heading above it, because the abstract is the", 72, 638, 10, False),
+    ("first place a paper states what it contributes to the field.", 72, 626, 10, False),
+    ("1 Introduction", 72, 600, 14, True),
+    ("The introduction follows the abstract and opens the first section", 72, 580, 10, False),
+    ("of the paper, which the reader turns into its own column of cards.", 72, 568, 10, False),
+]
+
+
 @unittest.skipIf(pdfplumber is None, "pdfplumber is not installed")
 class PdfFlowTest(unittest.TestCase):
+    def test_two_columns_stamp_table_figure_text_and_fragments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pdf = write_pdf(Path(directory) / "two.pdf", [TWO_COLUMN_PAGE])
+            spec, stats = parse_pdf(pdf, title="Two", citekey="two", item_key="TWO")
+        self.assertEqual(stats["pdf_title"], "Reading Two Column Papers Without Losing the Thread")
+        self.assertEqual([section["title"] for section in spec["sections"]], ["Abstract", "Introduction"])
+        abstract, intro = (section["blocks"] for section in spec["sections"])
+        self.assertEqual(abstract[0]["text"], "We introduce a reader that keeps two columns apart and joins each paragraph into one card for the author to review.")
+        self.assertEqual(abstract[0].get("role"), "contribution")
+        self.assertEqual([block["kind"] for block in intro], ["paragraph", "paragraph", "paragraph", "caption"])
+        self.assertEqual(intro[0]["text"], (
+            "Papers set in two columns place their lines side by side, so a reader that groups words by height "
+            "alone mixes the two columns into nonsense and loses the thread of every sentence it reads."
+        ))
+        self.assertEqual(intro[1]["text"], "The right column continues with its own paragraph, which must stay whole and must not be interleaved with the left.")
+        self.assertEqual(intro[2]["text"], "Tight kerning still yields separate words and the paragraph ends on this short line.")
+        self.assertTrue(intro[3]["text"].startswith("Table 1: Accuracy"))
+        every_text = " ".join(block["text"] for section in spec["sections"] for block in section["blocks"])
+        for dropped in ("arXiv", "2609", "System", "71.2", "encoder to decoder", "Lovelace", "@", "Input"):
+            self.assertNotIn(dropped, every_text)
+        filtered = stats["filtered"]
+        self.assertGreater(filtered["rotated_chars"], 0)
+        self.assertGreaterEqual(filtered["table"], 3)
+        self.assertGreaterEqual(filtered["figure_text"], 1)
+        self.assertEqual(filtered["fragments_dropped"], 1)
+
+    def test_prose_above_the_first_heading_is_kept_as_the_abstract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pdf = write_pdf(Path(directory) / "unheaded.pdf", [UNHEADED_ABSTRACT_PAGE])
+            spec, stats = parse_pdf(pdf, title="Unheaded", citekey="u", item_key="U")
+        self.assertEqual([section["title"] for section in spec["sections"]], ["Abstract", "Introduction"])
+        abstract = spec["sections"][0]["blocks"]
+        self.assertEqual(len(abstract), 1)
+        self.assertTrue(abstract[0]["text"].startswith("This paper presents a reader"))
+        self.assertEqual(abstract[0].get("role"), "contribution")
+        self.assertNotIn("Grace", " ".join(block["text"] for section in spec["sections"] for block in section["blocks"]))
+        self.assertEqual(stats["filtered"]["author_block"], 1)
+
     def test_blocks_headings_and_contribution_marks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             pdf = write_pdf(Path(directory) / "paper.pdf", PAPER_PAGES)
