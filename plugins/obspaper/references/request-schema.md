@@ -29,6 +29,7 @@ Every action names itself under `op`. The action lists below are written as
 - `shift_sibling_group`: sibling `group_id` and absolute `x`, `y`. The complete contained group moves rigidly.
 - `normalize_equations`: explicit `node_ids` whose text is fenced `math` or already `$$...$$`.
 - `normalize_paper_colors`: complete explicit manuscript-owned `node_ids`; optional `contribution_ids`, which must be a subset. It assigns `"4"` to contributions, `"6"` to remaining `# ` structural headings, and removes color from all other managed nodes. Exclude reviewer, mapping, author-note, and camera-ready annotation nodes.
+- `resize_group`: `groups`, each naming a group by `group_id` or `group_label` with any of `x`, `y`, `width`, `height`, `label`. Only the given fields change; see the research-flow section for the checks.
 - `compact_sections`: ordered `sections`, each with a structural `title_id` and the complete explicit `node_ids` for that section, including nested Appendix groups and artifacts; optional `gap`, default 120. Every title must already span its complete section rectangle. The first section stays fixed and later sections translate rigidly to the exact gap.
 
 ## Camera-ready mapping actions
@@ -72,8 +73,22 @@ Allowed mapping statuses are `wording`, `ready`, `pending`, `author input`, and 
 - Edge colour follows the streams an edge joins: main to main `"4"`, appendix to main `#8a96a1`, appendix to appendix `#c9d2da`. A main card pointing at an appendix card is refused, because that arrow sends the reader out of the argument mid-sentence; evidence points in, as a side card does.
 - `move_stream`: `stream`, the destination column `x`, and `node_ids`; optional `appendix_label` when the sub-group does not exist yet. Cards keep their ids and their `y`, so only the column, the sub-group, and the edges around them move. Every edge incident to a moved card is recoloured, and one left pointing the wrong way is turned around rather than refused -- the move is what invalidated it, not the request. When the last appendix card leaves, the sub-group goes with it.
 - A card placed past the target group's right or bottom edge grows the group to hold it, so a new question can be appended below an existing flow without resizing anything first. A card placed above or left of the group's origin is refused instead: moving the origin would swallow whatever sits outside.
+- A flow split into phases keeps each phase as a group inside the target. `add_research_flow`, `move_stream`, and `edit_text` grow those sub-groups too, not only the target, so a card appended at the foot of a phase stays in it. A card continues a sub-group when its x-range lies within the sub-group's and its top edge is inside the sub-group, or at most 240px below its bottom edge and not inside the next phase. Cards are taken top to bottom and each one extends the edge, so a whole block appended below a phase is followed down. A sub-group only grows downward, and only for cards this request placed or moved. The appendix sub-group is not grown this way; it is refit around its own cards. Growth that would overlap another group is refused, and so is a card left straddling a sub-group's edge, since Obsidian would drop it from the group.
 - `edit_text`: `nodes`, each with `node_id` and the replacement `text`; optional `height`. It rewrites prose and changes nothing else -- kind, colour, and geometry stay as they stand -- which is what settling on a term or polishing a sentence needs. Pass the body; the stamp is handled here, including a stale one carried in from another card. A file node has no text to rewrite.
 - `remove_items`: explicit `node_ids` and `edge_ids`. Include every edge incident to a removed node.
+- `create_group`: `key`, `label`, `x`, `y`, `width`, `height`; optional `group_id`. It makes a sub-group such as a phase at exactly that geometry, which must lie inside the target. The id derives from the key, so a rerun sets the same geometry and changes nothing. A new group may take in whole cards and whole groups -- a phase made around its own appendix -- but may not cut through either.
+- `resize_group`: `groups`, each with exactly one of `group_id` or `group_label` and any of `x`, `y`, `width`, `height`, `label`. Only the fields given change. Each group is the target or lies inside it. It is also allowed in the `paper` workflow. The checks run once every entry is in place, so a phase and the flow around it can be resized in one action in either order:
+  - a group keeps every card and group it held, so a shrink that would push one out is refused;
+  - a group stays inside every group that held it -- resize the parent in the same action;
+  - a group may not overlap a group it did not overlap before;
+  - no card may be left straddling a group's edge. A loose card that ends up wholly inside is taken in, which is how cards that fell out of a phase are recovered.
+
+```json
+{"op": "resize_group", "groups": [
+  {"group_id": "grp-research-flow-phase1", "height": 11720},
+  {"group_label": "Research Flow", "height": 48400}
+]}
+```
 
 ## Paper-flow build spec
 

@@ -1569,6 +1569,7 @@ def _compile_add_research_flow(
             _refit_appendix_group(scratch, target_group, appendix_ids, action.get("appendix_label")),
         )
         managed_ids.append(_appendix_group_id(scratch, target_group, action.get("appendix_label")))
+    managed_ids.extend(_grow_sub_groups_around(document, scratch, target_group, managed_ids, operations))
     managed = [scratch.node(node_id) for node_id in managed_ids]
     _append_operation(scratch, operations, _grow_group_around(scratch, target_group, managed))
     return operations
@@ -1669,6 +1670,140 @@ def _grow_group_around(
                 f"y={other_rect.y}..{other_rect.bottom}; move the cards to a column that fits"
             )
     return _node_operation(document, group_after)
+
+
+# How far below a sub-group's bottom edge a new card may start and still be read
+# as continuing that sub-group. It covers the widest gap the flow grammar leaves
+# between blocks (200px before an experiment row) plus the group's 20px padding.
+RESEARCH_FLOW_SUB_GROUP_REACH = 240
+
+
+def _is_appendix_group(node: dict[str, Any]) -> bool:
+    return (
+        node.get("type") == "group"
+        and isinstance(node.get("label"), str)
+        and bool(RESEARCH_FLOW_APPENDIX_LABEL.search(node["label"]))
+    )
+
+
+def _group_name(node: dict[str, Any]) -> str:
+    return node.get("label") or node["id"]
+
+
+def _span(rect: Rect) -> str:
+    return f"x={rect.x}..{rect.right}, y={rect.y}..{rect.bottom}"
+
+
+def _grow_sub_groups_around(
+    original: CanvasDocument,
+    scratch: CanvasDocument,
+    target_group: dict[str, Any],
+    item_ids: list[str],
+    operations: list[dict[str, Any]],
+    *,
+    padding: int = 20,
+) -> list[str]:
+    """Grow the sub-groups of the flow that new or moved cards continue.
+
+    A flow split into phases keeps each phase as a group inside the flow group.
+    Obsidian reads membership from geometry, so growing only the flow group lets
+    a card appended below a phase fall outside it without any error. Every
+    non-appendix group inside the target is therefore grown down to hold the
+    items that belong to it. The appendix sub-group is left to its own refit: it
+    bounds its cards exactly, and growing it over a main card would reclassify it.
+
+    Only items whose geometry this action changed are considered, so an untouched
+    card never pulls a group and a second run adds nothing. An item belongs to a
+    sub-group, judged against the sub-group as it stood before the action, when
+
+    - its x-range lies within the sub-group's x-range, and
+    - its top edge is inside the sub-group, or no more than
+      RESEARCH_FLOW_SUB_GROUP_REACH below its bottom edge and not inside another
+      group that neither holds nor is held by this sub-group -- the next phase.
+
+    Items are taken in (y, x, id) order and each one taken extends the bottom
+    edge, so a stack of cards appended below a phase is followed down however
+    tall it gets. Sub-groups are grown innermost first, and a grown sub-group is
+    itself an item for the groups around it. A sub-group only grows downward; its
+    x, y, and width never change.
+
+    Growth is refused when it would newly overlap another group, and a card left
+    straddling a sub-group's edge -- neither inside nor outside -- is refused too,
+    because Obsidian would silently drop it from the group.
+
+    Returns the ids of the grown sub-groups, so the target can grow around them.
+    """
+    before = original.node_map()
+    target_rect = node_rect(before[target_group["id"]])
+    items: list[dict[str, Any]] = []
+    for node_id in dict.fromkeys(item_ids):
+        node = scratch.node_map().get(node_id)
+        prior = before.get(node_id)
+        if node is not None and (prior is None or node_rect(prior) != node_rect(node)):
+            items.append(node)
+    if not items:
+        return []
+
+    groups = [
+        node
+        for node in original.nodes
+        if node.get("type") == "group" and node["id"] != target_group["id"] and target_rect.contains(node)
+    ]
+    candidates = sorted(
+        (group for group in groups if not _is_appendix_group(group)),
+        key=lambda group: (group["width"] * group["height"], group["id"]),
+    )
+    grown_ids: list[str] = []
+    for group in candidates:
+        rect = node_rect(group)
+        unrelated = [
+            node_rect(other)
+            for other in groups
+            if other["id"] != group["id"] and not rect.contains(other) and not node_rect(other).contains(group)
+        ]
+        bottom = rect.bottom
+        for item in sorted(items, key=lambda node: (node["y"], node["x"], node["id"])):
+            if item["id"] == group["id"] or item["x"] < rect.x or item["x"] + item["width"] > rect.right:
+                continue
+            starts_inside = rect.y <= item["y"] < bottom
+            starts_below = bottom <= item["y"] <= bottom + RESEARCH_FLOW_SUB_GROUP_REACH and not any(
+                other.x <= item["x"] < other.right and other.y <= item["y"] < other.bottom for other in unrelated
+            )
+            if starts_inside or starts_below:
+                bottom = max(bottom, item["y"] + item["height"] + padding)
+        grown = Rect(rect.x, rect.y, rect.width, bottom - rect.y)
+
+        for node in scratch.nodes:
+            if node["id"] == group["id"]:
+                continue
+            now = node_rect(node)
+            if not rects_overlap(grown, now):
+                continue
+            prior = before.get(node["id"])
+            if prior is not None and node_rect(prior).contains(group):
+                continue  # a group that holds this sub-group
+            if grown.contains(node) and (prior is None or node.get("type") != "group" or rect.contains(prior)):
+                continue  # held by the sub-group, or taken in whole
+            if prior is not None and node_rect(prior) == now and rects_overlap(rect, now):
+                continue  # an overlap this action did not make
+            if node.get("type") == "group":
+                raise PlanError(
+                    f"growing sub-group {_group_name(group)!r} to y={grown.bottom} would overlap the group "
+                    f"{_group_name(node)!r} at {_span(now)}; place the cards inside that group, "
+                    "or make room with resize_group first"
+                )
+            raise PlanError(
+                f"card {node['id']!r} at {_span(now)} straddles the edge of sub-group "
+                f"{_group_name(group)!r} at {_span(grown)}; Obsidian would drop it from the group, "
+                "so place it wholly inside the group's column or wholly outside it"
+            )
+
+        if grown != rect:
+            after = {**copy.deepcopy(scratch.node(group["id"])), "height": grown.height}
+            _append_operation(scratch, operations, _node_operation(scratch, after))
+            grown_ids.append(group["id"])
+            items.append(scratch.node(group["id"]))
+    return grown_ids
 
 
 def _appendix_group_id(
@@ -1789,7 +1924,8 @@ def _compile_edit_text(
         _append_operation(scratch, operations, _node_operation(scratch, after, target_group_id=target_group["id"]))
     if not operations:
         return operations
-    managed = [scratch.node(node_id) for node_id in node_ids]
+    grown_ids = _grow_sub_groups_around(document, scratch, target_group, node_ids, operations)
+    managed = [scratch.node(node_id) for node_id in [*node_ids, *grown_ids]]
     group_after = copy.deepcopy(scratch.node(target_group["id"]))
     group_after["height"] = max(group_after["height"], max(node["y"] + node["height"] for node in managed) - group_after["y"] + 20)
     _append_operation(scratch, operations, _node_operation(scratch, group_after))
@@ -1896,11 +2032,172 @@ def _compile_move_stream(
             })
     if not operations:
         return operations
-    managed = [scratch.node(node_id) for node_id in moved_ids]
+    managed_ids = sorted(moved_ids)
     if appendix_after:
-        managed.append(appendix_after)
+        managed_ids.append(appendix_after["id"])
+    managed_ids.extend(_grow_sub_groups_around(document, scratch, target_group, managed_ids, operations))
+    managed = [scratch.node(node_id) for node_id in managed_ids]
     _append_operation(scratch, operations, _grow_group_around(scratch, target_group, managed))
     return operations
+
+
+def _compile_group_changes(
+    document: CanvasDocument,
+    changes: list[tuple[dict[str, Any] | None, dict[str, Any]]],
+    what: str,
+) -> list[dict[str, Any]]:
+    """Set group geometry and labels without changing which group holds what.
+
+    Each change is (before, after); before is None for a new group. The checks run
+    once every change in the action is in place, so a phase and the flow group
+    around it can be resized together in either order.
+
+    - A group keeps every card and group it held: a shrink that pushes one out is
+      refused.
+    - A group stays inside every group that held it.
+    - A group may not overlap a group it did not overlap before. A new group may
+      take in whole groups, which is how a phase is made around its own appendix.
+    - No card may be left straddling a group's edge. A loose card that ends up
+      wholly inside is taken in, which is how cards that fell out are recovered.
+    """
+    scratch = CanvasDocument(copy.deepcopy(document.data))
+    operations: list[dict[str, Any]] = []
+    for _, after in changes:
+        _append_operation(scratch, operations, _node_operation(scratch, after))
+    before_map = document.node_map()
+    for before, after in changes:
+        name = _group_name(after)
+        rect_after = node_rect(after)
+        rect_before = node_rect(before) if before else None
+        for node in scratch.nodes:
+            if node["id"] == after["id"]:
+                continue
+            now = node_rect(node)
+            prior_node = before_map.get(node["id"])
+            prior = node_rect(prior_node) if prior_node else None
+            is_group = node.get("type") == "group"
+            kind = "group" if is_group else "card"
+            if rect_before and prior_node and rect_before.contains(prior_node):
+                if not rect_after.contains(node):
+                    raise PlanError(
+                        f"{what} would push the {kind} {_group_name(node) if is_group else node['id']!r} "
+                        f"at {_span(now)} out of {name!r} at {_span(rect_after)}; "
+                        "a group keeps everything it holds"
+                    )
+                continue
+            if is_group and prior_node and before and prior.contains(before):
+                if not now.contains(after):
+                    raise PlanError(
+                        f"{what} would take {name!r} to {_span(rect_after)}, past its parent group "
+                        f"{_group_name(node)!r} at {_span(now)}; resize the parent in the same action"
+                    )
+                continue
+            if is_group and before is None and now.contains(after):
+                continue
+            if not rects_overlap(rect_after, now):
+                continue
+            if before is not None and prior is not None and rects_overlap(rect_before, prior):
+                continue  # an overlap this action did not make
+            if is_group:
+                if before is None and rect_after.contains(node):
+                    continue
+                raise PlanError(
+                    f"{what} would make {name!r} at {_span(rect_after)} overlap the group "
+                    f"{_group_name(node)!r} at {_span(now)}"
+                )
+            if not rect_after.contains(node):
+                raise PlanError(
+                    f"{what} would leave card {node['id']!r} at {_span(now)} straddling the edge of "
+                    f"{name!r} at {_span(rect_after)}; Obsidian would drop it from the group"
+                )
+    return operations
+
+
+_GROUP_GEOMETRY = ("x", "y", "width", "height")
+
+
+def _group_geometry_value(field: str, value: Any, what: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise PlanError(f"{what} {field} must be an integer, got {value!r}")
+    if field in {"width", "height"} and value <= 0:
+        raise PlanError(f"{what} {field} must be positive, got {value}")
+    return value
+
+
+def _compile_resize_group(
+    document: CanvasDocument,
+    action: dict[str, Any],
+    target_group: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Move, resize, or relabel existing groups -- the target or any group inside it.
+
+    Without this, the only repair for a phase that lost its cards was editing the
+    .canvas file by hand, past the plan, the backup, and the action log. Only the
+    fields given change, and the result must hold exactly what the group held.
+    """
+    entries = action.get("groups")
+    if not isinstance(entries, list) or not entries:
+        raise PlanError("resize_group needs a non-empty groups list")
+    target_rect = node_rect(target_group)
+    changes: list[tuple[dict[str, Any] | None, dict[str, Any]]] = []
+    seen: set[str] = set()
+    for index, entry in enumerate(entries):
+        what = f"resize_group groups[{index}]"
+        if not isinstance(entry, dict):
+            raise PlanError(f"{what} must be an object")
+        unknown = sorted(set(entry) - {"group_id", "group_label", "label", *_GROUP_GEOMETRY})
+        if unknown:
+            raise PlanError(f"{what} has unknown fields {unknown}; it takes group_id or group_label, x, y, width, height, label")
+        if bool(entry.get("group_id")) == bool(entry.get("group_label")):
+            raise PlanError(f"{what} needs exactly one of group_id or group_label")
+        group = document.resolve_group(entry)
+        if group["id"] in seen:
+            raise PlanError(f"{what} names {_group_name(group)!r} a second time")
+        seen.add(group["id"])
+        if group["id"] != target_group["id"] and not target_rect.contains(group):
+            raise PlanError(f"{what} names {_group_name(group)!r}, which is not the target group or inside it")
+        after = copy.deepcopy(group)
+        for field in _GROUP_GEOMETRY:
+            if field in entry:
+                after[field] = _group_geometry_value(field, entry[field], what)
+        if "label" in entry:
+            if not isinstance(entry["label"], str) or not entry["label"].strip():
+                raise PlanError(f"{what} label must be a non-empty string")
+            after["label"] = entry["label"]
+        changes.append((group, after))
+    return _compile_group_changes(document, changes, "resize_group")
+
+
+def _compile_create_group(
+    document: CanvasDocument,
+    action: dict[str, Any],
+    target_group: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Make a sub-group inside the target, such as a phase, at explicit geometry.
+
+    The id is derived from the key, so a second run finds the group it made and
+    sets the same geometry again, which is no change at all.
+    """
+    key, label = action.get("key"), action.get("label")
+    if not isinstance(key, str) or not key:
+        raise PlanError("create_group needs a non-empty key")
+    if not isinstance(label, str) or not label.strip():
+        raise PlanError("create_group needs a non-empty label")
+    geometry = {field: _group_geometry_value(field, action.get(field), "create_group") for field in _GROUP_GEOMETRY}
+    group_id = action.get("group_id") or deterministic_id(target_group["id"], "group", key)
+    if group_id == target_group["id"]:
+        raise PlanError("create_group cannot name the target group; use resize_group")
+    existing = document.node_map().get(group_id)
+    if existing and existing.get("type") != "group":
+        raise PlanError(f"create_group id belongs to a non-group node: {group_id}")
+    after = copy.deepcopy(existing) if existing else {"id": group_id, "type": "group"}
+    after.update({**geometry, "label": label})
+    if not node_rect(target_group).contains(after):
+        raise PlanError(
+            f"create_group {label!r} at {_span(node_rect(after))} must lie inside the target group "
+            f"at {_span(node_rect(target_group))}; grow the target with resize_group first"
+        )
+    return _compile_group_changes(document, [(existing, after)], "create_group")
 
 
 def _compile_build_camera_ready(
@@ -2141,6 +2438,8 @@ REQUEST_COMPILERS: dict[
     "remove_items": _compile_remove_items,
     "edit_text": _compile_edit_text,
     "move_stream": _compile_move_stream,
+    "resize_group": _compile_resize_group,
+    "create_group": _compile_create_group,
     "layout_rebuttal": _compile_layout_rebuttal,
     "add_research_flow": _compile_add_research_flow,
     "build_camera_ready": _compile_build_camera_ready,
@@ -2160,11 +2459,20 @@ WORKFLOW_ACTIONS = {
         "normalize_equations",
         "normalize_paper_colors",
         "compact_sections",
+        "resize_group",
     },
     "camera-ready-mapping": {"map_issue", "mapping_master", "remove_items"},
     "camera-ready": {"build_camera_ready"},
     "rebuttal": {"layout_rebuttal"},
-    "research-flow": {"add_research_flow", "link_literature", "remove_items", "edit_text", "move_stream"},
+    "research-flow": {
+        "add_research_flow",
+        "link_literature",
+        "remove_items",
+        "edit_text",
+        "move_stream",
+        "resize_group",
+        "create_group",
+    },
 }
 
 
