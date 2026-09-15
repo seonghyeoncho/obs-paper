@@ -13,7 +13,9 @@ from obs_paper_engine import (
     PreconditionError,
     apply_patch,
     compile_request,
+    RESEARCH_FLOW_CREATE_MODES,
     inspect_canvas,
+    plan_group_label_migration_file,
     read_nodes,
     validate_canvas,
 )
@@ -23,6 +25,7 @@ from obs_project import (
     configure_vault,
     import_project,
     init_project,
+    record_project_groups,
     resolve_project,
     resolve_vault,
     standardize_project,
@@ -52,6 +55,7 @@ def main() -> None:
     inspect_parser.add_argument("canvas", type=Path)
     inspect_parser.add_argument("--group-id")
     inspect_parser.add_argument("--group-label")
+    inspect_parser.add_argument("--within", help="label of the parent group the target sits inside")
     inspect_parser.add_argument("--output", type=Path)
 
     plan_parser = subparsers.add_parser("plan")
@@ -95,6 +99,19 @@ def main() -> None:
     standardize_parser.add_argument("name")
     standardize_parser.add_argument("--repository", type=Path)
 
+    groups_parser = subparsers.add_parser("project-groups")
+    groups_parser.add_argument("vault", type=Path)
+    groups_parser.add_argument("name")
+    groups_parser.add_argument("--dry-run", action="store_true")
+
+    migrate_parser = subparsers.add_parser("migrate-labels")
+    migrate_parser.add_argument("canvas", type=Path)
+    migrate_parser.add_argument("--prefix-appendix", action="store_true")
+    migrate_parser.add_argument("--create-research-flow", choices=RESEARCH_FLOW_CREATE_MODES)
+    migrate_parser.add_argument("--patch-output", type=Path)
+    migrate_parser.add_argument("--apply", action="store_true")
+    migrate_parser.add_argument("--log", type=Path)
+
     vault_parser = subparsers.add_parser("vault-path")
     vault_parser.add_argument("name", nargs="?")
     vault_parser.add_argument("--obsidian", default="obsidian")
@@ -120,7 +137,7 @@ def main() -> None:
         if args.command == "inspect":
             target = None
             if args.group_id or args.group_label:
-                target = {"group_id": args.group_id, "group_label": args.group_label}
+                target = {"group_id": args.group_id, "group_label": args.group_label, "within": args.within}
                 target = {key: value for key, value in target.items() if value}
             emit(inspect_canvas(args.canvas, target), args.output)
         elif args.command == "plan":
@@ -144,6 +161,21 @@ def main() -> None:
             emit(resolve_project(args.vault, name=args.name, repository=args.repository))
         elif args.command == "project-standardize":
             emit(standardize_project(args.vault, args.name, args.repository))
+        elif args.command == "project-groups":
+            emit(record_project_groups(args.vault, args.name, write=not args.dry_run))
+        elif args.command == "migrate-labels":
+            patch = plan_group_label_migration_file(
+                args.canvas,
+                prefix_appendix=args.prefix_appendix,
+                create_research_flow=args.create_research_flow,
+            )
+            if args.patch_output:
+                emit(patch, args.patch_output)
+            if not args.apply:
+                emit({"status": "dry-run", **patch})
+            else:
+                log = args.log or args.canvas.parent / "CANVAS_ACTION_LOG.md"
+                emit({"report": patch["report"], **apply_patch(args.canvas, patch, log)})
         elif args.command == "vault-path":
             emit({"vault": args.name, "path": str(resolve_vault(args.name, args.obsidian, args.config))})
         elif args.command == "vault-config":

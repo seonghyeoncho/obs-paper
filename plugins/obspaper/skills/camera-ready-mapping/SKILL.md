@@ -5,7 +5,7 @@ description: "Map rebuttal promises, reviewer requests, verified results, and ad
 
 # Camera-Ready Mapping
 
-Use an existing manuscript version such as `paper_v2` as a read-only target. This stage shows, in plain language, what each reviewer asked, what will change, and where. Actual rewriting belongs in `paper_camera_ready`.
+Use an existing manuscript version such as `paper_v2`, or the latest `paper_vN` when the draft was revised again, as a read-only target. This stage shows, in plain language, what each reviewer asked, what will change, and where. Actual rewriting belongs in `paper_camera_ready`.
 
 ## Deterministic automation
 

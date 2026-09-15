@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from obs_paper_engine import PlanError, classify_groups
 from record_action import append_action
 
 
@@ -260,12 +261,20 @@ def standardize_project(vault: Path, name: str, repository: Path | None = None) 
             reason="Unified Sync vault project structure",
             result=f"Standardized {len(canvases)} Canvas files; localized {len(copied)} assets; changed {len(changed)} Canvas files",
         )
+    try:
+        groups = record_project_groups(vault, name)
+    except ProjectError as exc:
+        # Recording groups is a report on top of standardizing, not a precondition.
+        groups = {"status": "skipped", "groups": None, "unclassified": [], "notes": [str(exc)]}
     return {
         **result,
-        "status": "standardized" if changed or result["created"] else "exists",
+        "status": "standardized" if changed or result["created"] or groups["status"] == "recorded" else "exists",
         "canvases": [str(path) for path in canvases],
         "changed": changed,
         "assets": copied,
+        "groups": groups["groups"],
+        "unclassified_groups": groups["unclassified"],
+        "group_notes": groups["notes"],
     }
 
 
@@ -367,6 +376,104 @@ def set_frontmatter_value(path: Path, key: str, value: str) -> None:
     else:
         raise ProjectError(f"unterminated YAML frontmatter: {path}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def read_groups(path: Path) -> dict[str, str] | None:
+    """The `groups:` block of project.md, or None when it has not been recorded."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0] != "---":
+        return None
+    for index, line in enumerate(lines[1:], start=1):
+        if line == "---":
+            return None
+        if line.startswith("groups:"):
+            break
+    else:
+        return None
+    if line.split(":", 1)[1].strip() == "{}":
+        return {}
+    groups: dict[str, str] = {}
+    for entry in lines[index + 1 :]:
+        if not entry[:1].isspace():
+            break
+        key, _, value = entry.strip().partition(":")
+        value = value.strip()
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = value.strip("\"'")
+        if key and isinstance(parsed, str) and parsed:
+            groups[key] = parsed
+    return groups
+
+
+def write_groups(path: Path, groups: dict[str, str]) -> bool:
+    """Replace the `groups:` block; return whether project.md changed."""
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    if not lines or lines[0] != "---":
+        raise ProjectError(f"missing YAML frontmatter: {path}")
+    block = ["groups: {}"] if not groups else [
+        "groups:", *(f"  {role}: {json.dumps(group_id, ensure_ascii=False)}" for role, group_id in groups.items())
+    ]
+    start = end = None
+    for index, line in enumerate(lines[1:], start=1):
+        if line == "---":
+            end = index
+            break
+        if start is None and line.startswith("groups:"):
+            start = index
+    if end is None:
+        raise ProjectError(f"unterminated YAML frontmatter: {path}")
+    if start is None:
+        lines[end:end] = block
+    else:
+        stop = start + 1
+        while stop < end and lines[stop][:1].isspace():
+            stop += 1
+        lines[start:stop] = block
+    rendered = "\n".join(lines) + "\n"
+    if rendered == text:
+        return False
+    path.write_text(rendered, encoding="utf-8")
+    return True
+
+
+def record_project_groups(vault: Path, name: str, *, write: bool = True) -> dict[str, Any]:
+    """Classify the project Canvas's groups by stage and record their ids in project.md."""
+    resolved = resolve_project(vault, name=name)
+    root, canvas = Path(resolved["root"]), Path(resolved["canvas"])
+    try:
+        classified = classify_groups(json.loads(canvas.read_text(encoding="utf-8")))
+    except PlanError as exc:
+        raise ProjectError(f"cannot read groups from {canvas}: {exc}") from exc
+    metadata = root / "project.md"
+    previous = read_groups(metadata)
+    changed = previous != classified["groups"]
+    if write and changed:
+        write_groups(metadata, classified["groups"])
+        append_action(
+            root / "CANVAS_ACTION_LOG.md",
+            status="done",
+            action="record-project-groups",
+            target=str(metadata),
+            reason=f"Group-label contract; classified {canvas.name}",
+            result=f"Recorded {len(classified['groups'])} group roles; {len(classified['unclassified'])} groups unclassified",
+        )
+    notes = []
+    if classified["group_count"] == 0:
+        notes.append("the Canvas has no groups; run migrate-labels with --create-research-flow before targeting it")
+    elif "research_flow" not in classified["groups"]:
+        notes.append("no research_flow group was identified")
+    return {
+        "project": resolved["project"],
+        "canvas": str(canvas),
+        "status": ("recorded" if write else "dry-run") if changed else "unchanged",
+        "groups": classified["groups"],
+        "previous": previous,
+        "unclassified": classified["unclassified"],
+        "notes": notes,
+    }
 
 
 def _paper_flow_filename(title: str) -> str:
@@ -576,4 +683,8 @@ def resolve_project(vault: Path, *, name: str | None = None, repository: Path | 
     canvas = root / canvas_name
     if not canvas.is_file():
         raise ProjectError(f"project Canvas does not exist: {canvas}")
-    return {"project": root.name, "root": str(root), "canvas": str(canvas)}
+    resolved: dict[str, Any] = {"project": root.name, "root": str(root), "canvas": str(canvas)}
+    groups = read_groups(root / "project.md")
+    if groups is not None:
+        resolved["groups"] = groups
+    return resolved

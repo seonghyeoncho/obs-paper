@@ -5,7 +5,7 @@ description: "Create or update a sentence-level academic manuscript view inside 
 
 # Paper
 
-Treat each native `paper_vN` group as one manuscript-version workspace. The versions are stages, not copies: `paper_v1` is the Korean draft and the author's working-out, `paper_v2` is the English translation that gets submitted, and `rebuttal` and `camera_ready` follow. The Canvas is never the publication source of truth — where a project records an Overleaf project, that manuscript is; otherwise the repository manuscript is.
+Treat each native `paper_vN` group as one manuscript-version workspace. The versions are stages, not copies: `paper_v1` is the Korean draft and the author's working-out, `paper_v2` is the English translation that gets submitted, `paper_v3` and later are further revisions of that submission draft, and `rebuttal` and `camera_ready` follow. The Canvas is never the publication source of truth — where a project records an Overleaf project, that manuscript is; otherwise the repository manuscript is.
 
 ## Deterministic automation
 
@@ -93,7 +93,7 @@ After importing or reconstructing a paper version, run `normalize_paper_colors` 
 
 - Do not create a separate Appendix group or a bottom row of Appendix columns.
 - Each top-level section owns up to two vertical text columns: main text on the left and the Appendix material supporting that section on the right. The current `paper_v1` Skill Following section, with Appendix A beside its main text, is the reference geometry.
-- Wrap each section's Appendix column and its outside artifacts in one native Canvas group labeled `<Section> · Appendix <letters>`. Keep this section-scoped group inside the owning `paper_vN` group; the prohibition above applies only to a manuscript-wide or bottom Appendix group.
+- Wrap each section's Appendix column and its outside artifacts in one native Canvas group labeled `paper_vN · <Section> · Appendix <letters>`. Keep this section-scoped group inside the owning `paper_vN` group; the prohibition above applies only to a manuscript-wide or bottom Appendix group. The version prefix keeps the label unique once the next version copies the section. An older group labelled `<Section> · Appendix <letters>` in several versions is addressed with `"within": "paper_vN"` on the target, or renamed with `migrate-labels --prefix-appendix`.
 - Assign an Appendix section to the main section that explicitly references it first. If no explicit reference exists, use the section whose topic it documents. Ask only when ownership is genuinely ambiguous.
 - Keep each Appendix heading, sentence, paragraph, equation, table, figure, prompt, and schema complete and in source order. Appendix prose follows the same one-sentence and 20/40px rules as main prose.
 - Draw a reference edge from a main-text Appendix mention to the exact Appendix heading or narrower target in the right column. When the target is predominantly beside the source, start and end at their facing side ports; use vertical ports only when the target is predominantly above or below.

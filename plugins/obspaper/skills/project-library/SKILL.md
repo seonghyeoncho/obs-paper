@@ -52,7 +52,18 @@ Choose the mode before changing files:
 
 Do not mix the two workflows. In particular, do not treat migration as an empty initialization followed by ad-hoc copying.
 
-For an existing folder already under `<Vault>/Projects/<Project>/`, use `project-standardize`. It adopts a single legacy Canvas name through `project.md`, creates missing support files, copies file-node targets into `assets/`, rewrites those nodes to vault-relative paths, and backs up every changed Canvas. It refuses missing references, ambiguous Canvases without metadata, and unequal asset-name collisions.
+For an existing folder already under `<Vault>/Projects/<Project>/`, use `project-standardize`. It adopts a single legacy Canvas name through `project.md`, creates missing support files, copies file-node targets into `assets/`, rewrites those nodes to vault-relative paths, and backs up every changed Canvas. It refuses missing references, ambiguous Canvases without metadata, and unequal asset-name collisions. It also records the project's stage groups in `project.md`.
+
+`project.md` carries a `groups:` block mapping each stage role to its group id, so a tool can address `research_flow`, `phase_<n>`, `paper_v<N>`, `rebuttal`, or `camera_ready` without opening the Canvas:
+
+```yaml
+groups:
+  research_flow: "3f1c2a9b0d4e5f67"
+  paper_v1: "a1b2c3d4e5f60718"
+  paper_v2: "0918f7e6d5c4b3a2"
+```
+
+`project-groups <vault> <project>` refills it from the Canvas and lists the groups it could not classify; `--dry-run` reports without writing. `project-resolve` returns the block when present. Rerun it after creating or relabelling a stage group. The label contract itself is in `../../references/request-schema.md`.
 
 ## Literature source of truth
 

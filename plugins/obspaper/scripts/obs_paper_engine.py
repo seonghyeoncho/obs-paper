@@ -85,19 +85,37 @@ class CanvasDocument:
         group_label = target.get("group_label")
         if bool(group_id) == bool(group_label):
             raise PlanError("target needs exactly one of group_id or group_label")
+        scope = self.groups_within(target.get("within"))
         if group_id:
             group = self.node(group_id)
             if group.get("type") != "group":
                 raise PlanError(f"target is not a group: {group_id}")
+            if all(candidate["id"] != group_id for candidate in scope):
+                raise PlanError(f"target group {group_id} is not inside {target['within']!r}")
             return group
-        matches = [
-            node
-            for node in self.nodes
-            if node.get("type") == "group" and node.get("label") == group_label
-        ]
+        matches = match_group_label(scope, group_label)
         if len(matches) != 1:
             raise PlanError(f"group label must resolve once: {group_label!r} ({len(matches)} matches)")
         return matches[0]
+
+    def groups_within(self, within: Any = None) -> list[dict[str, Any]]:
+        """Every group, or only those geometrically inside the named parent group.
+
+        Versioning repeats sub-group labels: `paper_v1`, `paper_v2`, and
+        `paper_camera_ready` each hold their own `Appendix A`. The parent is what
+        tells them apart, the same way Obsidian reads membership from geometry.
+        """
+        groups = [node for node in self.nodes if node.get("type") == "group"]
+        if within is None:
+            return groups
+        if not isinstance(within, str) or not within:
+            raise PlanError("target within must be the label of a parent group")
+        try:
+            parent = self.resolve_group({"group_label": within})
+        except PlanError as exc:
+            raise PlanError(f"target within: {exc}") from exc
+        rect = node_rect(parent)
+        return [node for node in groups if node["id"] != parent["id"] and rect.contains(node)]
 
     def contained_non_groups(self, rect: Rect) -> list[dict[str, Any]]:
         return [node for node in self.nodes if node.get("type") != "group" and rect.contains(node)]
@@ -120,6 +138,134 @@ class CanvasDocument:
         for edge in self.edges:
             if edge.get("fromNode") not in node_ids or edge.get("toNode") not in node_ids:
                 raise PlanError(f"edge {edge['id']} has a missing endpoint")
+
+
+# Group-label contract. A tool addresses a group by label, so the labels that
+# name a stage are fixed: `research_flow`, `paper_v<N>` for any N >= 1,
+# `Rebuttal`, and `paper_camera_ready`. A research flow that changed its protocol
+# part-way is split into `Phase <n> — ...` sub-groups inside the one
+# `research_flow` container. Older canvases spell the flow label several ways, so
+# a request for `research_flow` also accepts those spellings -- but only when
+# exactly one group matches, and an exact label always wins.
+RESEARCH_FLOW_LABEL = "research_flow"
+PAPER_CAMERA_READY_LABEL = "paper_camera_ready"
+REBUTTAL_LABEL = "Rebuttal"
+VERSION_LABEL_SEPARATOR = " · "
+_PAPER_VERSION_LABEL = re.compile(r"^paper ?v([1-9][0-9]*)$")
+_PHASE_LABEL = re.compile(r"^phase ([0-9]+)(?:\s|$)")
+_RESEARCH_FLOW_VARIANT = re.compile(r"^(?:.+ )?research flow(?:\s*[—–:|(·-].*)?$")
+
+
+def normalize_group_label(label: str) -> str:
+    """Case, width, underscores, and inner hyphens do not distinguish two labels."""
+    text = unicodedata.normalize("NFKC", label).casefold()
+    text = re.sub(r"(?<=\w)-(?=\w)", " ", text.replace("_", " "))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def is_research_flow_label(label: Any) -> bool:
+    """`research_flow`, `Research Flow`, `Research Flow — ...`, `X Research Flow`."""
+    return isinstance(label, str) and bool(_RESEARCH_FLOW_VARIANT.match(normalize_group_label(label)))
+
+
+def group_role(label: Any) -> str | None:
+    """The stage a group label names, or None for a sub-group or free label."""
+    if not isinstance(label, str):
+        return None
+    text = normalize_group_label(label)
+    phase = _PHASE_LABEL.match(text)
+    if phase:
+        return f"phase_{int(phase.group(1))}"
+    if is_research_flow_label(label):
+        return "research_flow"
+    version = _PAPER_VERSION_LABEL.match(text)
+    if version:
+        return f"paper_v{int(version.group(1))}"
+    if text == "rebuttal":
+        return "rebuttal"
+    if text in {"paper camera ready", "camera ready"}:
+        return "camera_ready"
+    return None
+
+
+def canonical_group_label(role: str) -> str:
+    if role == "rebuttal":
+        return REBUTTAL_LABEL
+    if role == "camera_ready":
+        return PAPER_CAMERA_READY_LABEL
+    return role
+
+
+def match_group_label(groups: list[dict[str, Any]], label: Any) -> list[dict[str, Any]]:
+    exact = [group for group in groups if group.get("label") == label]
+    if exact or not isinstance(label, str) or normalize_group_label(label) != "research flow":
+        return exact
+    return [group for group in groups if group_role(group.get("label")) == "research_flow"]
+
+
+def _role_order(role: str) -> tuple[int, int]:
+    kind, _, number = role.rpartition("_")
+    if role == "research_flow":
+        return (0, 0)
+    if kind == "phase":
+        return (1, int(number))
+    if role.startswith("paper_v"):
+        return (2, int(role[len("paper_v"):]))
+    return (3, 0 if role == "rebuttal" else 1)
+
+
+def classify_groups(data: dict[str, Any]) -> dict[str, Any]:
+    """Map each stage role to its group id and list what could not be placed.
+
+    A role held by several groups is left out and reported, unless exactly one of
+    them carries the canonical label. A phase counts only inside the research
+    flow container. A group nested inside a classified group is that stage's own
+    sub-group -- an appendix, a section -- and needs no role.
+    """
+    document = CanvasDocument(data)
+    groups = [node for node in document.nodes if node.get("type") == "group"]
+    candidates: dict[str, list[dict[str, Any]]] = {}
+    for group in groups:
+        role = group_role(group.get("label"))
+        if role:
+            candidates.setdefault(role, []).append(group)
+    chosen: dict[str, dict[str, Any]] = {}
+    unclassified: list[dict[str, Any]] = []
+    for role, holders in candidates.items():
+        if len(holders) > 1:
+            canonical = [group for group in holders if group.get("label") == canonical_group_label(role)]
+            if len(canonical) != 1:
+                unclassified.extend(
+                    {"id": group["id"], "label": group.get("label"), "reason": f"{len(holders)} groups claim {role}"}
+                    for group in holders
+                )
+                continue
+            unclassified.extend(
+                {"id": group["id"], "label": group.get("label"), "reason": f"{role} is held by the canonically labelled group"}
+                for group in holders
+                if group is not canonical[0]
+            )
+            holders = canonical
+        chosen[role] = holders[0]
+    flow = chosen.get("research_flow")
+    for role in [role for role in chosen if role.startswith("phase_")]:
+        if flow is None or not node_rect(flow).contains(chosen[role]):
+            group = chosen.pop(role)
+            unclassified.append(
+                {"id": group["id"], "label": group.get("label"), "reason": "phase group outside a research_flow container"}
+            )
+    placed = {group["id"] for group in chosen.values()} | {item["id"] for item in unclassified}
+    for group in groups:
+        if group["id"] in placed:
+            continue
+        if any(node_rect(owner).contains(group) for owner in chosen.values()):
+            continue
+        unclassified.append({"id": group["id"], "label": group.get("label"), "reason": "no stage role"})
+    return {
+        "groups": {role: chosen[role]["id"] for role in sorted(chosen, key=_role_order)},
+        "unclassified": unclassified,
+        "group_count": len(groups),
+    }
 
 
 def canvas_sha256(path: Path) -> str:
@@ -2321,6 +2467,141 @@ def compile_request(canvas: Path, request: dict[str, Any]) -> dict[str, Any]:
         json.loads(canvas.read_text(encoding="utf-8")),
         request,
         document_id=str(canvas),
+    )
+    patch["canvas"] = str(canvas)
+    patch["expected_sha256"] = canvas_sha256(canvas)
+    return patch
+
+
+RESEARCH_FLOW_CREATE_MODES = ("around", "beside")
+
+
+def plan_group_label_migration(
+    data: dict[str, Any],
+    *,
+    document_id: str,
+    prefix_appendix: bool = False,
+    create_research_flow: str | None = None,
+) -> dict[str, Any]:
+    """Rewrite group labels to the contract as an ordinary SHA-bound patch.
+
+    Only labels change, so every group keeps its id and every card keeps its
+    place; a second plan over the result is empty. The research flow is renamed
+    only when exactly one group spells it. Appendix labels repeated across
+    versions gain their version as a prefix only with `prefix_appendix`. A canvas
+    with no research flow gets one only with `create_research_flow`: `around`
+    wraps every node, and is refused when a manuscript, rebuttal, or camera-ready
+    group would be swallowed; `beside` places an empty group right of everything.
+    """
+    if create_research_flow not in (None, *RESEARCH_FLOW_CREATE_MODES):
+        raise PlanError(f"create_research_flow must be one of {list(RESEARCH_FLOW_CREATE_MODES)}")
+    document = CanvasDocument(copy.deepcopy(data))
+    groups = [node for node in document.nodes if node.get("type") == "group"]
+    operations: list[dict[str, Any]] = []
+    renamed: list[dict[str, Any]] = []
+    created: list[dict[str, Any]] = []
+    notes: list[str] = []
+
+    def relabel(group: dict[str, Any], label: str) -> None:
+        renamed.append({"id": group["id"], "from": group.get("label"), "to": label})
+        _append_operation(document, operations, _node_operation(document, {**copy.deepcopy(group), "label": label}))
+
+    flows = [group for group in groups if group_role(group.get("label")) == "research_flow"]
+    canonical = [group for group in flows if group.get("label") == RESEARCH_FLOW_LABEL]
+    if len(flows) == 1 and not canonical:
+        relabel(flows[0], RESEARCH_FLOW_LABEL)
+    elif len(flows) > 1 and len(canonical) != 1:
+        notes.append(
+            f"{len(flows)} groups spell the research flow ({sorted(str(group.get('label')) for group in flows)}); "
+            "none was renamed -- rename the real one in Obsidian or pass its group_id"
+        )
+    elif not flows:
+        if create_research_flow is None:
+            notes.append(
+                "no research_flow group" + (" and no groups at all" if not groups else "")
+                + "; rerun with create_research_flow 'around' or 'beside', or draw one in Obsidian"
+            )
+        else:
+            group_id = deterministic_id(RESEARCH_FLOW_LABEL, "group")
+            if group_id in document.node_map():
+                raise PlanError(f"node id {group_id} is taken; draw the research_flow group in Obsidian")
+            nodes = list(document.nodes)
+            if create_research_flow == "around":
+                blocking = sorted(
+                    str(group.get("label"))
+                    for group in groups
+                    if (group_role(group.get("label")) or "").startswith(("paper_v", "rebuttal", "camera_ready"))
+                )
+                if blocking:
+                    raise PlanError(
+                        f"a research_flow group around every node would swallow {blocking}; use 'beside'"
+                    )
+                rect = bounding_rect(nodes, 40) if nodes else Rect(0, 0, 1200, 800)
+            else:
+                right = max((node["x"] + node["width"] for node in nodes), default=-400)
+                top = min((node["y"] for node in nodes), default=0)
+                rect = Rect(right + 400, top, 1200, 800)
+            after = {
+                "id": group_id,
+                "type": "group",
+                "x": rect.x,
+                "y": rect.y,
+                "width": rect.width,
+                "height": rect.height,
+                "label": RESEARCH_FLOW_LABEL,
+            }
+            created.append({"id": group_id, "label": RESEARCH_FLOW_LABEL, "mode": create_research_flow})
+            _append_operation(document, operations, _node_operation(document, after))
+
+    if prefix_appendix:
+        groups = [node for node in document.nodes if node.get("type") == "group"]
+        versions = [
+            group
+            for group in groups
+            if (group_role(group.get("label")) or "").startswith("paper_v") or group_role(group.get("label")) == "camera_ready"
+        ]
+        labels = [group.get("label") for group in groups]
+        proposals: list[tuple[dict[str, Any], str]] = []
+        for group in groups:
+            label = group.get("label")
+            if not isinstance(label, str) or not RESEARCH_FLOW_APPENDIX_LABEL.search(label) or labels.count(label) < 2:
+                continue
+            owners = [version for version in versions if version["id"] != group["id"] and node_rect(version).contains(group)]
+            if len(owners) != 1:
+                notes.append(f"appendix group {group['id']} ({label!r}) sits in {len(owners)} version groups; left as is")
+                continue
+            prefix = f"{owners[0]['label']}{VERSION_LABEL_SEPARATOR}"
+            if not label.startswith(prefix):
+                proposals.append((group, prefix + label))
+        final = {group["id"]: group.get("label") for group in groups}
+        final.update({group["id"]: label for group, label in proposals})
+        for group, label in proposals:
+            if list(final.values()).count(label) > 1:
+                notes.append(f"appendix group {group['id']} would still share {label!r} inside its version; left as is")
+                continue
+            relabel(group, label)
+
+    report = classify_groups(document.data)
+    patch = {
+        "schema_version": 1,
+        "workflow": "migrate-labels",
+        "document_id": document_id,
+        "expected_revision": document_revision(data),
+        "operations": operations,
+        "report": {
+            "renamed": renamed,
+            "created": created,
+            "groups": report["groups"],
+            "unclassified": report["unclassified"],
+            "notes": notes,
+        },
+    }
+    return patch
+
+
+def plan_group_label_migration_file(canvas: Path, **options: Any) -> dict[str, Any]:
+    patch = plan_group_label_migration(
+        json.loads(canvas.read_text(encoding="utf-8")), document_id=str(canvas), **options
     )
     patch["canvas"] = str(canvas)
     patch["expected_sha256"] = canvas_sha256(canvas)
