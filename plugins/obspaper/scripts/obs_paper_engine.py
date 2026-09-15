@@ -1365,7 +1365,7 @@ def _compile_layout_rebuttal(
     for row in rows:
         cursor_x = x
         row_ids: list[str] = []
-        for index, (text, width) in enumerate(zip(row["stages"], widths, strict=True)):
+        for index, (text, width) in enumerate(zip(row["stages"], widths)):
             node_id = deterministic_id(target_group["id"], "rebuttal_stage", row["key"], str(index))
             after = copy.deepcopy(scratch.node_map().get(node_id)) if node_id in scratch.node_map() else {"id": node_id, "type": "text"}
             after.update({
