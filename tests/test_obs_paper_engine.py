@@ -1597,3 +1597,228 @@ class ResearchFlowStreamTest(unittest.TestCase):
         with self.assertRaises(PlanError) as raised:
             compile_document(canvas, request, document_id="t")
         self.assertIn("'paper_v1'", str(raised.exception))
+
+
+class LayoutCheckTest(unittest.TestCase):
+    def canvas(self, *extra: dict) -> dict:
+        return {
+            "nodes": [
+                {"id": "g", "type": "group", "label": "flow", "x": 0, "y": 0, "width": 900, "height": 300},
+                {"id": "a", "type": "text", "x": 20, "y": 20, "width": 812, "height": 51, "text": "한 줄짜리 문장이다."},
+                {"id": "b", "type": "text", "x": 20, "y": 91, "width": 812, "height": 51, "color": "4", "text": "Second line."},
+                *extra,
+            ],
+            "edges": [],
+        }
+
+    def kinds(self, report: dict) -> list:
+        return [(finding["kind"], finding["severity"], finding["node_ids"]) for finding in report["findings"]]
+
+    def test_a_clean_canvas_has_no_findings(self) -> None:
+        from obs_paper_engine import check_layout
+
+        report = check_layout(self.canvas())
+        self.assertEqual(report["status"], "clean")
+        self.assertEqual(report["findings"], [])
+        self.assertEqual((report["errors"], report["warnings"]), (0, 0))
+
+    def test_a_card_across_a_group_edge_is_an_error(self) -> None:
+        from obs_paper_engine import check_layout
+
+        report = check_layout(self.canvas(
+            {"id": "c", "type": "text", "x": 20, "y": 280, "width": 812, "height": 51, "text": "Escaped."}
+        ))
+        self.assertEqual(self.kinds(report), [("straddles_group", "error", ["c", "g"])])
+        finding = report["findings"][0]
+        self.assertEqual(finding["details"]["outside"], {"bottom": 31})
+        self.assertEqual(finding["labels"], ["Escaped.", "flow"])
+        self.assertEqual(report["status"], "errors")
+
+    def test_overlapping_cards_are_an_error(self) -> None:
+        from obs_paper_engine import check_layout
+
+        report = check_layout(self.canvas(
+            {"id": "c", "type": "text", "x": 420, "y": 60, "width": 400, "height": 51, "text": "On top."}
+        ))
+        overlaps = [finding for finding in report["findings"] if finding["kind"] == "card_overlap"]
+        self.assertEqual([finding["node_ids"] for finding in overlaps], [["a", "c"], ["b", "c"]])
+        self.assertEqual(overlaps[0]["details"]["overlap"], {"width": 400, "height": 11})
+
+    def test_touching_cards_do_not_overlap(self) -> None:
+        from obs_paper_engine import check_layout
+
+        report = check_layout(self.canvas(
+            {"id": "c", "type": "text", "x": 20, "y": 142, "width": 812, "height": 51, "text": "Right below."}
+        ))
+        self.assertEqual(report["findings"], [])
+
+    def test_sibling_groups_that_overlap_are_an_error(self) -> None:
+        from obs_paper_engine import check_layout
+
+        data = {
+            "nodes": [
+                {"id": "outer", "type": "group", "label": "Research Flow", "x": 0, "y": 0, "width": 1000, "height": 700},
+                {"id": "p0", "type": "group", "label": "Phase 0", "x": 20, "y": 20, "width": 900, "height": 340},
+                {"id": "p1", "type": "group", "label": "Phase 1", "x": 20, "y": 300, "width": 900, "height": 380},
+            ],
+            "edges": [],
+        }
+        report = check_layout(data)
+        self.assertEqual(self.kinds(report), [("group_overlap", "error", ["p0", "p1"])])
+        self.assertEqual(report["findings"][0]["details"]["overlap"], {"width": 900, "height": 60})
+
+    def test_a_card_far_taller_than_its_text_is_a_warning(self) -> None:
+        from obs_paper_engine import check_layout
+
+        data = self.canvas()
+        data["nodes"][0]["height"] = 1100
+        data["nodes"].append(
+            {"id": "t", "type": "text", "x": 20, "y": 162, "width": 812, "height": 900, "color": "4", "text": "# RQ-E3"}
+        )
+        report = check_layout(data)
+        self.assertEqual(self.kinds(report), [("card_height", "warning", ["t"])])
+        details = report["findings"][0]["details"]
+        self.assertEqual((details["estimate"], details["difference"], details["content"]), (51, 849, "prose"))
+        self.assertEqual(report["status"], "warnings")
+
+    def test_table_cards_get_a_wider_height_tolerance(self) -> None:
+        from obs_paper_engine import check_layout, estimate_text_height
+
+        table = "| 항목 | 값 |\n|---|---|\n| grid | 2 domain |\n| 산출물 | results/main2_* |"
+        estimate = estimate_text_height(table, 560, "paragraph")
+
+        def report_for(height: int) -> dict:
+            data = self.canvas({"id": "t", "type": "text", "x": 900 + 40, "y": 0, "width": 560, "height": height, "text": table})
+            return check_layout(data)
+
+        self.assertEqual(report_for(estimate + 100)["findings"], [], "a table 100px off is within the table tolerance")
+        prose = self.canvas({"id": "p", "type": "text", "x": 940, "y": 0, "width": 812, "height": 151, "text": "Prose."})
+        self.assertEqual(self.kinds(check_layout(prose)), [("card_height", "warning", ["p"])], "prose 100px off is not")
+        far = report_for(estimate + 200)
+        self.assertEqual(self.kinds(far), [("card_height", "warning", ["t"])])
+        self.assertEqual(far["findings"][0]["details"]["content"], "table")
+        self.assertIn("approximate", far["findings"][0]["message"])
+
+    def test_a_lopsided_group_margin_is_a_warning(self) -> None:
+        from obs_paper_engine import check_layout
+
+        data = self.canvas()
+        data["nodes"][0]["width"] = 7000
+        data["nodes"][0]["height"] = 162
+        report = check_layout(data)
+        self.assertEqual(self.kinds(report), [("group_padding", "warning", ["g"])])
+        details = report["findings"][0]["details"]
+        self.assertEqual(details["side"], "right")
+        self.assertEqual(details["padding"], {"left": 20, "top": 20, "right": 6168, "bottom": 20})
+
+    def test_padding_is_measured_from_direct_children(self) -> None:
+        from obs_paper_engine import check_layout
+
+        data = {
+            "nodes": [
+                {"id": "outer", "type": "group", "label": "Research Flow", "x": 0, "y": 0, "width": 900, "height": 800},
+                {"id": "inner", "type": "group", "label": "Phase 0", "x": 20, "y": 20, "width": 860, "height": 760},
+                {"id": "a", "type": "text", "x": 40, "y": 40, "width": 812, "height": 51, "text": "Card."},
+            ],
+            "edges": [],
+        }
+        report = check_layout(data)
+        self.assertEqual(
+            self.kinds(report), [("group_padding", "warning", ["inner"])],
+            "the outer group is measured to the inner group, not to the card inside it",
+        )
+
+    def test_scope_keeps_findings_that_touch_the_group(self) -> None:
+        from obs_paper_engine import check_layout
+
+        data = self.canvas(
+            {"id": "c", "type": "text", "x": 20, "y": 280, "width": 812, "height": 51, "text": "Escaped."},
+            {"id": "h", "type": "group", "label": "elsewhere", "x": 2000, "y": 0, "width": 900, "height": 300},
+            {"id": "x", "type": "text", "x": 2020, "y": 20, "width": 812, "height": 51, "text": "One."},
+            {"id": "y", "type": "text", "x": 2020, "y": 40, "width": 812, "height": 51, "text": "Two."},
+        )
+        whole = check_layout(data)
+        self.assertEqual({finding["kind"] for finding in whole["findings"]}, {"straddles_group", "card_overlap"})
+        scoped = check_layout(data, {"group_label": "elsewhere"})
+        self.assertEqual(self.kinds(scoped), [("card_overlap", "error", ["x", "y"])])
+        self.assertEqual(scoped["scope"], {"group_id": "h", "label": "elsewhere"})
+
+    def test_layout_check_is_deterministic(self) -> None:
+        from obs_paper_engine import check_layout
+
+        data = self.canvas(
+            {"id": "c", "type": "text", "x": 420, "y": 60, "width": 400, "height": 400, "text": "On top."}
+        )
+        reversed_data = copy.deepcopy(data)
+        reversed_data["nodes"].reverse()
+        self.assertEqual(check_layout(data)["findings"], check_layout(reversed_data)["findings"])
+
+    def test_cli_exits_non_zero_only_on_errors(self) -> None:
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            clean = root / "clean.canvas"
+            clean.write_text(json.dumps(self.canvas()), encoding="utf-8")
+            broken = root / "broken.canvas"
+            broken.write_text(json.dumps(self.canvas(
+                {"id": "c", "type": "text", "x": 20, "y": 280, "width": 812, "height": 51, "text": "Escaped."}
+            )), encoding="utf-8")
+            script = str(SCRIPTS / "obs_paper.py")
+            ok = subprocess.run([sys.executable, script, "layout-check", str(clean)], capture_output=True, text=True)
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            self.assertEqual(json.loads(ok.stdout)["status"], "clean")
+            bad = subprocess.run([sys.executable, script, "layout-check", str(broken)], capture_output=True, text=True)
+            self.assertEqual(bad.returncode, 1, bad.stderr)
+            self.assertEqual(json.loads(bad.stdout)["findings"][0]["kind"], "straddles_group")
+
+            svg = root / "layout.svg"
+            rendered = subprocess.run(
+                [sys.executable, script, "layout-render", str(broken), "--output", str(svg), "--group-label", "flow"],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(rendered.returncode, 1, rendered.stderr)
+            self.assertTrue(svg.exists())
+
+    def test_render_writes_well_formed_svg_with_findings_marked(self) -> None:
+        import xml.etree.ElementTree as ElementTree
+        from obs_paper_engine import layout_render
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            canvas = root / "flow.canvas"
+            canvas.write_text(json.dumps(self.canvas(
+                {"id": "c", "type": "text", "x": 420, "y": 60, "width": 400, "height": 51, "text": "<On & top>"},
+                {"id": "f", "type": "file", "x": 1000, "y": 0, "width": 400, "height": 300, "file": "fig/a.png"},
+            )), encoding="utf-8")
+            output = root / "flow.svg"
+            result = layout_render(canvas, output)
+            self.assertEqual(result["errors"], 2)
+            svg = ElementTree.parse(output).getroot()
+            namespace = "{http://www.w3.org/2000/svg}"
+            self.assertEqual(svg.tag, namespace + "svg")
+            rects = svg.findall(f".//{namespace}rect")
+            self.assertIn("#e03131", {rect.get("stroke") for rect in rects}, "an error is outlined in red")
+            self.assertIn("#44cf6e", {rect.get("fill") for rect in rects}, "colour 4 is Obsidian green")
+            texts = "".join(text.text or "" for text in svg.iter(namespace + "text"))
+            self.assertIn("flow", texts)
+            self.assertIn("<On & top>", texts)
+
+            scoped = root / "scoped.svg"
+            layout_render(canvas, scoped, {"group_id": "g"})
+            ids = "".join(title.text or "" for title in ElementTree.parse(scoped).getroot().iter(namespace + "title"))
+            self.assertNotIn("fig/a.png", ids, "a scoped drawing leaves out cards outside the group")
+
+    def test_validate_reports_layout_counts_without_failing(self) -> None:
+        from obs_paper_engine import validate_canvas
+
+        with tempfile.TemporaryDirectory() as directory:
+            canvas = Path(directory) / "flow.canvas"
+            canvas.write_text(json.dumps(self.canvas(
+                {"id": "c", "type": "text", "x": 20, "y": 280, "width": 812, "height": 51, "text": "Escaped."}
+            )), encoding="utf-8")
+            result = validate_canvas(canvas)
+            self.assertEqual(result["status"], "valid")
+            self.assertEqual((result["nodes"], result["edges"]), (4, 0))
+            self.assertIn("sha256", result)
+            self.assertEqual((result["layout"]["errors"], result["layout"]["warnings"]), (1, 0))

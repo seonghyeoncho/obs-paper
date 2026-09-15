@@ -2474,9 +2474,471 @@ def inspect_canvas(canvas: Path, target: dict[str, Any] | None = None) -> dict[s
 
 def validate_canvas(canvas: Path) -> dict[str, Any]:
     document = CanvasDocument.load(canvas)
+    # Layout findings are reported, never enforced here: validate answers whether
+    # the file is sound, and callers rely on it passing for any parseable Canvas.
+    layout = check_layout(document.data)
     return {
         "status": "valid",
         "nodes": len(document.nodes),
         "edges": len(document.edges),
         "sha256": canvas_sha256(canvas),
+        "layout": {
+            "errors": layout["errors"],
+            "warnings": layout["warnings"],
+            "detail": "run layout-check for the findings",
+        },
+    }
+
+
+# Layout checks
+#
+# The skills state layout rules in prose -- a card is as tall as its text, cards
+# do not overlap, a group holds its cards -- and nothing checked them, so a
+# broken layout surfaced only when someone opened the Canvas in Obsidian. These
+# checks read geometry alone and never write, so they are safe on any Canvas.
+
+# A prose estimate lands within a pixel on measured cards, but it counts wrapped
+# lines from an average glyph width, and one misjudged wrap moves a card by a
+# line (27px). 40px absorbs that one line and not two; 15% of the estimate
+# allows a line per few paragraphs on a long card.
+LAYOUT_HEIGHT_TOLERANCE = 40
+LAYOUT_HEIGHT_TOLERANCE_RATIO = 0.15
+# Obsidian sizes table columns to their content and wraps cells, so a table's
+# height is not a function of its text; rendered maths is no better. Only a
+# card far off the estimate is worth a look.
+LAYOUT_TABLE_HEIGHT_TOLERANCE = 120
+LAYOUT_TABLE_HEIGHT_TOLERANCE_RATIO = 0.5
+# A side margin this much wider than every other side of the same group is
+# empty space nobody meant to leave, usually a group grown for cards that moved.
+LAYOUT_PADDING_SLACK = 400
+
+LAYOUT_SEVERITY_ORDER = {"error": 0, "warning": 1}
+
+
+def _layout_label(node: dict[str, Any]) -> str:
+    node_type = node.get("type")
+    if node_type == "group":
+        label = node.get("label") if isinstance(node.get("label"), str) else ""
+    elif node_type == "file":
+        label = node.get("file") if isinstance(node.get("file"), str) else ""
+    elif node_type == "link":
+        label = node.get("url") if isinstance(node.get("url"), str) else ""
+    else:
+        text = node.get("text") if isinstance(node.get("text"), str) else ""
+        text = _NODE_ID_STAMP.sub("", text)
+        label = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    return label if len(label) <= 60 else label[:59] + "…"
+
+
+def _layout_number(value: float) -> float:
+    return int(value) if float(value).is_integer() else round(float(value), 2)
+
+
+def _layout_rect(node: dict[str, Any]) -> dict[str, float]:
+    return {key: _layout_number(node[key]) for key in ("x", "y", "width", "height")}
+
+
+def _layout_area(node: dict[str, Any]) -> float:
+    return node["width"] * node["height"]
+
+
+def _layout_parents(nodes: list[dict[str, Any]]) -> dict[str, str | None]:
+    """Each node's innermost containing group, which is how Obsidian nests them."""
+    order = {node["id"]: index for index, node in enumerate(nodes)}
+    groups = [node for node in nodes if node.get("type") == "group"]
+    parents: dict[str, str | None] = {}
+    for node in nodes:
+        holders = [
+            group
+            for group in groups
+            if group["id"] != node["id"]
+            and node_rect(group).contains(node)
+            # Two groups with the same rectangle each contain the other; the one
+            # earlier in the file is taken as the outer one.
+            and not (
+                node.get("type") == "group"
+                and _layout_area(group) == _layout_area(node)
+                and order[group["id"]] > order[node["id"]]
+            )
+        ]
+        holders.sort(key=lambda group: (_layout_area(group), -order[group["id"]]))
+        parents[node["id"]] = holders[0]["id"] if holders else None
+    return parents
+
+
+def _layout_text_kind(text: str) -> str:
+    body = _NODE_ID_STAMP.sub("", text).strip()
+    if body.startswith("$$") and body.endswith("$$") and len(body) >= 4:
+        return "equation"
+    if any(line.strip().startswith("|") for line in body.splitlines()):
+        return "table"
+    return "prose"
+
+
+def _finding(
+    kind: str,
+    severity: str,
+    nodes: list[dict[str, Any]],
+    message: str,
+    details: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "severity": severity,
+        "node_ids": [node["id"] for node in nodes],
+        "labels": [_layout_label(node) for node in nodes],
+        "message": message,
+        "details": details,
+    }
+
+
+def _name(node: dict[str, Any]) -> str:
+    label = _layout_label(node)
+    return f"{node['id']} ({label!r})" if label else node["id"]
+
+
+def check_layout(
+    data: dict[str, Any],
+    target: dict[str, Any] | None = None,
+    *,
+    height_tolerance: int = LAYOUT_HEIGHT_TOLERANCE,
+    table_height_tolerance: int = LAYOUT_TABLE_HEIGHT_TOLERANCE,
+    padding_slack: int = LAYOUT_PADDING_SLACK,
+) -> dict[str, Any]:
+    """Report layout rule violations in a Canvas document, without changing it.
+
+    Errors are geometry Obsidian misreads: a card half inside a group belongs to
+    it or not depending on where you look, two groups that overlap without one
+    holding the other share cards, and overlapping cards hide each other. Warnings
+    are estimates and taste: a card height far from its text, a lopsided group.
+    """
+    document = CanvasDocument(data)
+    nodes = document.nodes
+    groups = [node for node in nodes if node.get("type") == "group"]
+    cards = [node for node in nodes if node.get("type") != "group"]
+    findings: list[dict[str, Any]] = []
+
+    for card in cards:
+        card_rect = node_rect(card)
+        for group in groups:
+            group_rect = node_rect(group)
+            if not rects_overlap(card_rect, group_rect) or group_rect.contains(card):
+                continue
+            outside = {
+                "left": max(0, group_rect.x - card_rect.x),
+                "top": max(0, group_rect.y - card_rect.y),
+                "right": max(0, card_rect.right - group_rect.right),
+                "bottom": max(0, card_rect.bottom - group_rect.bottom),
+            }
+            sides = [side for side in ("left", "top", "right", "bottom") if outside[side] > 0]
+            findings.append(_finding(
+                "straddles_group",
+                "error",
+                [card, group],
+                f"card {_name(card)} crosses the {'/'.join(sides)} edge of group {_name(group)} "
+                f"by {', '.join(str(_layout_number(outside[side])) + 'px' for side in sides)}; "
+                "Obsidian decides membership from geometry, so move the card or resize the group",
+                {
+                    "card": _layout_rect(card),
+                    "group": _layout_rect(group),
+                    "outside": {side: _layout_number(outside[side]) for side in sides},
+                },
+            ))
+
+    ordered_groups = sorted(groups, key=lambda node: node["id"])
+    for index, left in enumerate(ordered_groups):
+        left_rect = node_rect(left)
+        for right in ordered_groups[index + 1:]:
+            right_rect = node_rect(right)
+            if not rects_overlap(left_rect, right_rect) or left_rect.contains(right) or right_rect.contains(left):
+                continue
+            overlap = {
+                "width": _layout_number(min(left_rect.right, right_rect.right) - max(left_rect.x, right_rect.x)),
+                "height": _layout_number(min(left_rect.bottom, right_rect.bottom) - max(left_rect.y, right_rect.y)),
+            }
+            findings.append(_finding(
+                "group_overlap",
+                "error",
+                [left, right],
+                f"groups {_name(left)} and {_name(right)} overlap by "
+                f"{overlap['width']}x{overlap['height']}px and neither holds the other; "
+                "cards in the shared area belong to both",
+                {"groups": [_layout_rect(left), _layout_rect(right)], "overlap": overlap},
+            ))
+
+    by_x = sorted(cards, key=lambda node: (node["x"], node["id"]))
+    for index, left in enumerate(by_x):
+        left_rect = node_rect(left)
+        for right in by_x[index + 1:]:
+            if right["x"] >= left_rect.right:
+                break
+            right_rect = node_rect(right)
+            if not rects_overlap(left_rect, right_rect):
+                continue
+            pair = sorted([left, right], key=lambda node: node["id"])
+            overlap = {
+                "width": _layout_number(min(left_rect.right, right_rect.right) - max(left_rect.x, right_rect.x)),
+                "height": _layout_number(min(left_rect.bottom, right_rect.bottom) - max(left_rect.y, right_rect.y)),
+            }
+            findings.append(_finding(
+                "card_overlap",
+                "error",
+                pair,
+                f"cards {_name(pair[0])} and {_name(pair[1])} overlap by "
+                f"{overlap['width']}x{overlap['height']}px",
+                {"cards": [_layout_rect(pair[0]), _layout_rect(pair[1])], "overlap": overlap},
+            ))
+
+    for card in cards:
+        if card.get("type") != "text" or not isinstance(card.get("text"), str):
+            continue
+        text_kind = _layout_text_kind(card["text"])
+        estimate = estimate_text_height(
+            card["text"], int(card["width"]), "equation" if text_kind == "equation" else "paragraph"
+        )
+        if text_kind == "prose":
+            tolerance = max(height_tolerance, int(estimate * LAYOUT_HEIGHT_TOLERANCE_RATIO))
+        else:
+            tolerance = max(table_height_tolerance, int(estimate * LAYOUT_TABLE_HEIGHT_TOLERANCE_RATIO))
+        difference = card["height"] - estimate
+        if abs(difference) <= tolerance:
+            continue
+        findings.append(_finding(
+            "card_height",
+            "warning",
+            [card],
+            f"card {_name(card)} is {_layout_number(card['height'])}px tall but its text measures about "
+            f"{estimate}px ({'taller' if difference > 0 else 'shorter'} by {_layout_number(abs(difference))}px, "
+            f"tolerance {tolerance}px{' for a ' + text_kind + ' card, whose estimate is approximate' if text_kind != 'prose' else ''})",
+            {
+                "height": _layout_number(card["height"]),
+                "estimate": estimate,
+                "difference": _layout_number(difference),
+                "tolerance": tolerance,
+                "content": text_kind,
+            },
+        ))
+
+    parents = _layout_parents(nodes)
+    for group in groups:
+        children = [node for node in nodes if parents.get(node["id"]) == group["id"]]
+        if not children:
+            continue
+        group_rect = node_rect(group)
+        padding = {
+            "left": min(node["x"] for node in children) - group_rect.x,
+            "top": min(node["y"] for node in children) - group_rect.y,
+            "right": group_rect.right - max(node["x"] + node["width"] for node in children),
+            "bottom": group_rect.bottom - max(node["y"] + node["height"] for node in children),
+        }
+        for side in ("left", "top", "right", "bottom"):
+            others = max(value for key, value in padding.items() if key != side)
+            if padding[side] - others <= padding_slack:
+                continue
+            findings.append(_finding(
+                "group_padding",
+                "warning",
+                [group],
+                f"group {_name(group)} leaves {_layout_number(padding[side])}px empty on the {side} "
+                f"against at most {_layout_number(others)}px on the other sides",
+                {
+                    "side": side,
+                    "padding": {key: _layout_number(value) for key, value in padding.items()},
+                    "slack": padding_slack,
+                    "group": _layout_rect(group),
+                },
+            ))
+
+    scope = None
+    if target:
+        scope_group = document.resolve_group(target)
+        scope_rect = node_rect(scope_group)
+        node_map = document.node_map()
+
+        def in_scope(node_id: str) -> bool:
+            node = node_map[node_id]
+            if node_id == scope_group["id"]:
+                return True
+            if not rects_overlap(node_rect(node), scope_rect):
+                return False
+            # A group that holds the scope group is its context, not its content.
+            return not (node.get("type") == "group" and node_rect(node).contains(scope_group))
+
+        findings = [finding for finding in findings if any(in_scope(node_id) for node_id in finding["node_ids"])]
+        scope = {"group_id": scope_group["id"], "label": scope_group.get("label")}
+
+    findings.sort(key=lambda finding: (
+        LAYOUT_SEVERITY_ORDER[finding["severity"]], finding["kind"], finding["node_ids"], finding["message"]
+    ))
+    errors = sum(1 for finding in findings if finding["severity"] == "error")
+    warnings = len(findings) - errors
+    return {
+        "status": "errors" if errors else "warnings" if warnings else "clean",
+        "scope": scope,
+        "errors": errors,
+        "warnings": warnings,
+        "tolerances": {
+            "height": height_tolerance,
+            "height_ratio": LAYOUT_HEIGHT_TOLERANCE_RATIO,
+            "table_height": table_height_tolerance,
+            "table_height_ratio": LAYOUT_TABLE_HEIGHT_TOLERANCE_RATIO,
+            "padding_slack": padding_slack,
+        },
+        "findings": findings,
+    }
+
+
+def layout_check(canvas: Path, target: dict[str, Any] | None = None, **tolerances: int) -> dict[str, Any]:
+    data = json.loads(canvas.read_text(encoding="utf-8"))
+    report = check_layout(data, target, **tolerances)
+    return {"canvas": str(canvas), "sha256": canvas_sha256(canvas), **report}
+
+
+# Obsidian's preset colours "1".."6"; any other value is a hex colour already.
+OBSIDIAN_COLORS = {
+    "1": "#fb464c",
+    "2": "#e9973f",
+    "3": "#e0de71",
+    "4": "#44cf6e",
+    "5": "#53dfdd",
+    "6": "#a882ff",
+}
+LAYOUT_DEFAULT_COLOR = "#8a8a8a"
+LAYOUT_RENDER_SIZE = 1600  # the longer side of the drawing, in screen pixels
+
+
+def _layout_color(node: dict[str, Any]) -> str:
+    color = node.get("color")
+    if isinstance(color, str) and color in OBSIDIAN_COLORS:
+        return OBSIDIAN_COLORS[color]
+    if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?", color):
+        return color
+    return LAYOUT_DEFAULT_COLOR
+
+
+def render_layout_svg(
+    data: dict[str, Any], target: dict[str, Any] | None = None, *, title: str = "canvas", **tolerances: int
+) -> tuple[str, dict[str, Any]]:
+    """Draw a Canvas, or one group of it, as SVG with layout-check findings marked.
+
+    Groups are labelled outlines and cards are rectangles in their Obsidian
+    colour. A card or group named in an error is outlined in red, in a warning
+    in dashed orange; hovering any shape shows its id and what is wrong with it.
+    """
+    from xml.sax.saxutils import escape, quoteattr
+
+    report = check_layout(data, target, **tolerances)
+    document = CanvasDocument(data)
+    nodes = document.nodes
+    if report["scope"]:
+        scope_group = document.node(report["scope"]["group_id"])
+        scope_rect = node_rect(scope_group)
+        nodes = [
+            node for node in nodes
+            if node["id"] == scope_group["id"]
+            or (rects_overlap(node_rect(node), scope_rect) and not (node.get("type") == "group" and node_rect(node).contains(scope_group)))
+        ]
+    if nodes:
+        left = min(node["x"] for node in nodes)
+        top = min(node["y"] for node in nodes)
+        right = max(node["x"] + node["width"] for node in nodes)
+        bottom = max(node["y"] + node["height"] for node in nodes)
+    else:
+        left, top, right, bottom = 0, 0, 800, 600
+    span = max(right - left, bottom - top, 1)
+    scale = min(1.0, LAYOUT_RENDER_SIZE / span)
+    font = 14 / scale
+    margin = 3 * font
+    view_x, view_y = left - margin, top - margin - 2 * font
+    view_w, view_h = right - left + 2 * margin, bottom - top + 2 * margin + 2 * font
+    n = _layout_number
+
+    notes: dict[str, list[dict[str, Any]]] = {}
+    for finding in report["findings"]:
+        for node_id in finding["node_ids"]:
+            notes.setdefault(node_id, []).append(finding)
+
+    def hover(node: dict[str, Any]) -> str:
+        lines = [_name(node)] + [f"{item['severity']}: {item['message']}" for item in notes.get(node["id"], [])]
+        return f"<title>{escape(chr(10).join(lines))}</title>"
+
+    stroke = n(1 / scale)
+    out = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{n(view_w * scale)}" height="{n(view_h * scale)}" '
+        f'viewBox="{n(view_x)} {n(view_y)} {n(view_w)} {n(view_h)}" font-family="sans-serif">',
+        f'<rect x="{n(view_x)}" y="{n(view_y)}" width="{n(view_w)}" height="{n(view_h)}" fill="#ffffff"/>',
+        f'<text x="{n(left)}" y="{n(top - margin)}" font-size="{n(font)}" fill="#222222">'
+        f'{escape(title)}: {report["errors"]} error(s), {report["warnings"]} warning(s)</text>',
+    ]
+    groups = sorted(
+        (node for node in nodes if node.get("type") == "group"),
+        key=lambda node: (-_layout_area(node), node["id"]),
+    )
+    for group in groups:
+        color = _layout_color(group)
+        out.append(
+            f'<g><rect x="{n(group["x"])}" y="{n(group["y"])}" width="{n(group["width"])}" height="{n(group["height"])}" '
+            f'fill={quoteattr(color)} fill-opacity="0.05" stroke={quoteattr(color)} stroke-width="{n(2 * stroke)}"/>'
+            f'{hover(group)}</g>'
+        )
+    for card in (node for node in nodes if node.get("type") != "group"):
+        color = _layout_color(card)
+        out.append(
+            f'<g><rect x="{n(card["x"])}" y="{n(card["y"])}" width="{n(card["width"])}" height="{n(card["height"])}" '
+            f'fill={quoteattr(color)} fill-opacity="0.3" stroke={quoteattr(color)} stroke-width="{stroke}"/>'
+            f'{hover(card)}</g>'
+        )
+    shown = {node["id"] for node in nodes}
+    for severity, style in (("warning", 'stroke="#f08c00" stroke-dasharray="{dash}"'), ("error", 'stroke="#e03131"')):
+        for finding in report["findings"]:
+            if finding["severity"] != severity:
+                continue
+            for node_id in finding["node_ids"]:
+                if node_id not in shown:
+                    continue
+                node = document.node(node_id)
+                out.append(
+                    f'<rect x="{n(node["x"])}" y="{n(node["y"])}" width="{n(node["width"])}" height="{n(node["height"])}" '
+                    f'fill="none" stroke-width="{n(3 * stroke)}" '
+                    + style.format(dash=f"{n(8 * stroke)} {n(5 * stroke)}")
+                    + "/>"
+                )
+            if finding["kind"] == "card_overlap":
+                first, second = (node_rect(document.node(node_id)) for node_id in finding["node_ids"])
+                out.append(
+                    f'<rect x="{n(max(first.x, second.x))}" y="{n(max(first.y, second.y))}" '
+                    f'width="{finding["details"]["overlap"]["width"]}" height="{finding["details"]["overlap"]["height"]}" '
+                    'fill="#e03131" fill-opacity="0.45"/>'
+                )
+    for group in groups:
+        label = _layout_label(group) or group["id"]
+        out.append(
+            f'<text x="{n(group["x"])}" y="{n(group["y"] - font * 0.4)}" font-size="{n(font)}" fill="#222222">{escape(label)}</text>'
+        )
+    for card in (node for node in nodes if node.get("type") != "group"):
+        label = _layout_label(card)
+        if not label or card["width"] < 6 * font or card["height"] < 1.5 * font:
+            continue
+        characters = max(1, int(card["width"] / (font * 0.6)) - 1)
+        if len(label) > characters:
+            label = label[: max(1, characters - 1)] + "…"
+        out.append(
+            f'<text x="{n(card["x"] + font * 0.4)}" y="{n(card["y"] + font * 1.2)}" font-size="{n(font)}" fill="#222222">{escape(label)}</text>'
+        )
+    out.append("</svg>")
+    return "\n".join(out) + "\n", report
+
+
+def layout_render(
+    canvas: Path, output: Path, target: dict[str, Any] | None = None, **tolerances: int
+) -> dict[str, Any]:
+    data = json.loads(canvas.read_text(encoding="utf-8"))
+    svg, report = render_layout_svg(data, target, title=canvas.name, **tolerances)
+    output.write_text(svg, encoding="utf-8")
+    return {
+        "canvas": str(canvas),
+        "output": str(output),
+        "scope": report["scope"],
+        "errors": report["errors"],
+        "warnings": report["warnings"],
     }

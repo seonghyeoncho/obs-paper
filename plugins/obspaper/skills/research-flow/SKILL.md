@@ -18,6 +18,7 @@ Treat the user's research notes and existing Obsidian Canvas as paired research 
 - Give an experiment ordered `sections` for its setup/results/control compound. The handler creates green H2 cards without internal arrows and routes outgoing flow from the final section.
 - Supply an actual `file` for a figure and the complete Markdown source for a table. The handler rejects figure placeholders.
 - Run `plan`, inspect the patch, `apply` with the adjacent action log, `validate`, and rerun `plan` to confirm zero operations.
+- After `apply`, run `layout-check` scoped to the flow group. `validate` passes a card that has fallen out of its phase group or a title card far taller than its text; `layout-check` does not. Fix every error before the next change, look at each warning, and use `layout-render` to see the group when the numbers alone do not say what is wrong. See the layout check section of the request schema.
 
 ## Start every research-flow task
 

@@ -163,6 +163,10 @@ python plugins/obspaper/scripts/obs_paper.py inspect paper.canvas --group-label 
 python plugins/obspaper/scripts/obs_paper.py plan paper.canvas request.json --output patch.json
 python plugins/obspaper/scripts/obs_paper.py apply paper.canvas patch.json --log CANVAS_ACTION_LOG.md
 python plugins/obspaper/scripts/obs_paper.py validate paper.canvas
+python plugins/obspaper/scripts/obs_paper.py layout-check paper.canvas --group-label paper_v1
+python plugins/obspaper/scripts/obs_paper.py layout-render paper.canvas --group-label paper_v1 --output layout.svg
 ```
+
+`layout-check` reports cards crossing a group edge, overlapping groups or cards, card heights far from their text, and lopsided group margins, and exits 1 on errors. `layout-render` draws the same findings as SVG.
 
 Re-running `plan` after a successful apply must produce an empty `operations` array.
