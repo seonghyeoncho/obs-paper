@@ -20,7 +20,7 @@ from obs_project import (  # noqa: E402
     resolve_vault,
     standardize_project,
 )
-from pdf_to_flow import Line, _heading, _join_lines, build_from_pdf, build_words, page_lines, parse_pdf  # noqa: E402
+from pdf_to_flow import Line, _heading, _join_lines, build_from_pdf, build_words, match_outline, page_lines, parse_pdf  # noqa: E402
 from obs_paper_engine import CanvasDocument, apply_patch, compile_request, node_rect, rects_overlap  # noqa: E402
 
 try:
@@ -297,6 +297,53 @@ class ProjectZoteroTest(unittest.TestCase):
         self.assertNotEqual(_heading(line("A.1 Illustration of the Tasks"), 10, [], True)[2], "numbered")
         self.assertEqual(_heading(line("A.1 Illustration of the Tasks"), 10, [], True, appendix=True)[0], 1)
 
+    def test_table_headers_and_run_in_leads_are_not_headings(self) -> None:
+        def line(text: str, bold: float = 1.0, gap: float = 0.3) -> Line:
+            return Line(text, 1, 0, 100, 110, 72, 300, 10, bold, max_gap=gap)
+
+        self.assertIsNone(_heading(line("MNLI QNLI QQP RTE"), 10, [], True))
+        self.assertIsNone(_heading(line("Masking SQuAD 2.0 MNLI-m SST-2"), 10, [], True))
+        self.assertIsNone(_heading(line("Model data bsz", gap=6.0), 10, [], True))
+        self.assertIsNone(_heading(line("Comparisons with State-of-the-art Methods. In Table 4", bold=0.83), 10, [], True))
+        self.assertIsNone(_heading(line("Masked Language Model (MLM) A random", bold=0.77), 10, [], True))
+        self.assertEqual(_heading(line("Training Details"), 10, [], True)[2], "bold")
+        self.assertEqual(_heading(Line("5.3 DEBERTA XXL", 1, 0, 100, 110, 72, 300, 10, 0.0), 10, [], True), (1, "DEBERTA XXL", "numbered"))
+        self.assertEqual(_heading(line("4.1 GLUE"), 10, [], True), (1, "GLUE", "numbered"))
+
+    def test_line_break_hyphens_follow_the_document_vocabulary(self) -> None:
+        def pair(first: str, second: str, vocabulary: set[str] | None) -> str:
+            return _join_lines([Line(first, 1, 0, 10, 20, 72, 300, 10, 0), Line(second, 1, 0, 22, 32, 72, 300, 10, 0)], vocabulary)
+
+        self.assertEqual(pair("LORA: LOW-RANK ADAPTATION OF LARGE LAN-", "GUAGE MODELS", {"language"}), "LORA: LOW-RANK ADAPTATION OF LARGE LANGUAGE MODELS")
+        self.assertEqual(pair("MULTI-HEAD SELF-", "ATTENTION", {"self-attention"}), "MULTI-HEAD SELF-ATTENTION")
+        self.assertEqual(pair("reduce the need for task-", "specific architectures", {"task-specific"}), "reduce the need for task-specific architectures")
+        self.assertEqual(pair("the architec-", "ture works", set()), "the architecture works")
+
+    def test_outline_entries_are_matched_to_lines_by_text_and_height(self) -> None:
+        def line(text: str, page: int, top: float) -> Line:
+            return Line(text, page, 0, top, top + 10, 72, 300, 10, 0.0)
+
+        lines = [
+            line("1 INTRODUCTION", 1, 100),
+            line("Body text that mentions the introduction.", 1, 120),
+            line("1.1 Scope of the", 1, 300),
+            line("Reader", 1, 312),
+            line("A PROOFS", 2, 50),
+            line("B MORE RESULTS", 2, 400),
+            line("More Results", 2, 600),
+        ]
+        entries = [
+            {"level": 1, "title": "1 Introduction", "page": 1, "top": 98},
+            {"level": 2, "title": "1.1 Scope of the Reader", "page": 1, "top": 296},
+            {"level": 1, "title": "A Proofs", "page": 2, "top": 48},
+            {"level": 1, "title": "B More Results", "page": 2, "top": 398},
+            {"level": 1, "title": "C Missing", "page": 2, "top": 10},
+        ]
+        headings, continuation, unmatched = match_outline(entries, lines)
+        self.assertEqual(headings, {0: (0, "Introduction"), 2: (1, "Scope of the Reader"), 4: (0, "Proofs"), 5: (0, "More Results")})
+        self.assertEqual(continuation, {3})
+        self.assertEqual(unmatched, ["C Missing"])
+
     def test_paper_flow_colours_paragraph_roles_and_rejects_green_headings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -439,12 +486,13 @@ def _pdf_string(text: str) -> str:  # noqa: D103
     return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
-def write_pdf(path: Path, pages: list[list[tuple[str, float, float, float, bool]]]) -> Path:
+def write_pdf(path: Path, pages: list[list[tuple]], outline: list[tuple[int, str, int, float]] | None = None) -> Path:
     """Write a minimal PDF from (text, x, baseline y, size, font[, rotated]) items.
 
     font is False for Helvetica, True for Helvetica-Bold, or "mono" for Courier.
     A list of strings is drawn as one TJ run with kerning gaps and no space
     characters; rotated text is turned 90 degrees like an arXiv side stamp.
+    outline holds (level, title, page index, destination y) bookmarks.
     """
     objects: list[bytes] = [b"", b""]
     for base in ("Helvetica", "Helvetica-Bold", "Courier"):
@@ -468,7 +516,47 @@ def write_pdf(path: Path, pages: list[list[tuple[str, float, float, float, bool]
             f"/Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents {len(objects) + 2} 0 R >>".encode()
         )
         objects.append(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"endstream")
-    objects[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
+    catalog = ""
+    if outline:
+        root: dict = {"children": []}
+        stack: list = [(0, root)]
+        for level, title, page_index, y in outline:
+            node = {"title": title, "page": kids[page_index], "y": y, "children": []}
+            while stack[-1][0] >= level:
+                stack.pop()
+            stack[-1][1]["children"].append(node)
+            stack.append((level, node))
+
+        def number(node: dict) -> None:
+            objects.append(b"")
+            node["num"] = len(objects)
+            for child in node["children"]:
+                number(child)
+
+        def count(node: dict) -> int:
+            return sum(1 + count(child) for child in node["children"])
+
+        def emit(node: dict, parent: dict | None, previous: dict | None, following: dict | None) -> None:
+            fields = ["/Type /Outlines"] if parent is None else [
+                f"/Title ({_pdf_string(node['title'])})",
+                f"/Parent {parent['num']} 0 R",
+                f"/Dest [{node['page']} 0 R /XYZ 0 {node['y']} null]",
+            ]
+            if previous:
+                fields.append(f"/Prev {previous['num']} 0 R")
+            if following:
+                fields.append(f"/Next {following['num']} 0 R")
+            children = node["children"]
+            if children:
+                fields += [f"/First {children[0]['num']} 0 R", f"/Last {children[-1]['num']} 0 R", f"/Count {count(node)}"]
+            objects[node["num"] - 1] = ("<< " + " ".join(fields) + " >>").encode("latin-1")
+            for index, child in enumerate(children):
+                emit(child, node, children[index - 1] if index else None, children[index + 1] if index + 1 < len(children) else None)
+
+        number(root)
+        emit(root, None, None, None)
+        catalog = f" /Outlines {root['num']} 0 R"
+    objects[0] = f"<< /Type /Catalog /Pages 2 0 R{catalog} >>".encode()
     objects[1] = ("<< /Type /Pages /Kids [" + " ".join(f"{kid} 0 R" for kid in kids) + f"] /Count {len(kids)} >>").encode()
     out = bytearray(b"%PDF-1.4\n")
     offsets = []
@@ -557,8 +645,72 @@ UNHEADED_ABSTRACT_PAGE = [
 ]
 
 
+OUTLINE_PAGE = [
+    ("Plain Headings Paper Title", 72, 720, 18, True),
+    ("Ada Lovelace, Example University", 72, 700, 10, False),
+    ("Introduction", 72, 670, 10, False),
+    ("Reading a paper whose headings look like body text needs the outline that", 72, 655, 10, False),
+    ("the typesetter wrote into the file, because size and weight say nothing about", 72, 643, 10, False),
+    ("where one section of the paper ends and where the next one begins.", 72, 631, 10, False),
+    ("Scope and Limits of the", 72, 606, 10, False),
+    ("Reader", 72, 594, 10, False),
+    ("The reader trusts the outline first and falls back to the fonts only when a", 72, 579, 10, False),
+    ("document carries no outline at all or when one of its entries is missing.", 72, 567, 10, False),
+    ("Method", 72, 542, 10, False),
+    ("Each outline entry is matched to the lines on its page by their text and by", 72, 527, 10, False),
+    ("the height that its destination names on that same page of the document.", 72, 515, 10, False),
+]
+OUTLINE = [(1, "1 Introduction", 0, 680), (2, "1.1 Scope and Limits of the Reader", 0, 616), (1, "2 Method", 0, 552), (1, "3 Missing Entry", 0, 300)]
+TABLE_PAGE = [
+    ("Tables Do Not Make Headings", 72, 720, 18, True),
+    ("1 Results", 72, 690, 12, True),
+    ("We compare two systems on four tasks and report accuracy for each of them in", 72, 672, 10, False),
+    ("the table below, which the reader must leave out of the flow entirely.", 72, 660, 10, False),
+    ("MNLI", 150, 636, 10, True), ("QNLI", 250, 636, 10, True), ("QQP", 350, 636, 10, True), ("RTE", 450, 636, 10, True),
+    ("Model", 150, 624, 10, True), ("data", 250, 624, 10, True), ("bsz", 350, 624, 10, True),
+    ("BERT", 150, 612, 10, False), ("84.6", 250, 612, 10, False), ("90.5", 350, 612, 10, False), ("66.4", 450, 612, 10, False),
+    ("RoBERTa", 150, 600, 10, False), ("90.2", 250, 600, 10, False), ("94.7", 350, 600, 10, False), ("86.6", 450, 600, 10, False),
+    ("Table 1: Accuracy on four tasks.", 72, 580, 10, False),
+    ("SST MRPC CoLA", 72, 556, 10, True),
+    ("The abbreviations above are set in bold but name datasets, not a section.", 72, 544, 10, False),
+    ("Training Details", 72, 520, 10, True),
+    ("We train every model for three epochs and keep the checkpoint that scores", 72, 508, 10, False),
+    ("best on the development set of each task.", 72, 496, 10, False),
+    ("Setup.", 72, 472, 10, True),
+    ("We use one learning rate for all tasks and never tune it on the test", 106, 472, 10, False),
+    ("data, so the paragraph continues on this line and ends here.", 72, 460, 10, False),
+]
+
+
 @unittest.skipIf(pdfplumber is None, "pdfplumber is not installed")
 class PdfFlowTest(unittest.TestCase):
+    def test_outline_is_the_heading_source_when_fonts_say_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pdf = write_pdf(Path(directory) / "outline.pdf", [OUTLINE_PAGE], OUTLINE)
+            spec, stats = parse_pdf(pdf, title="Outline", citekey="o", item_key="O")
+        self.assertEqual([(section["title"], section["source"]) for section in spec["sections"]], [("Introduction", "outline"), ("Method", "outline")])
+        intro = spec["sections"][0]["blocks"]
+        self.assertEqual([block["kind"] for block in intro], ["paragraph", "heading", "paragraph"])
+        self.assertEqual((intro[1]["level"], intro[1]["text"], intro[1]["source"]), (1, "Scope and Limits of the Reader", "outline"))
+        self.assertTrue(intro[2]["text"].startswith("The reader trusts the outline"))
+        self.assertEqual(stats["heading_sources"], {"outline": 3, "font": 0})
+        self.assertEqual((stats["outline"]["entries"], stats["outline"]["used"], stats["outline"]["unmatched"]), (4, True, ["3 Missing Entry"]))
+        self.assertNotIn("Lovelace", " ".join(block["text"] for section in spec["sections"] for block in section["blocks"]))
+
+    def test_table_headers_are_dropped_and_run_in_leads_stay_prose(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pdf = write_pdf(Path(directory) / "table.pdf", [TABLE_PAGE])
+            spec, stats = parse_pdf(pdf, title="Table", citekey="t", item_key="T")
+        self.assertEqual([section["title"] for section in spec["sections"]], ["Results"])
+        blocks = spec["sections"][0]["blocks"]
+        self.assertEqual([(block["level"], block["text"]) for block in blocks if block["kind"] == "heading"], [(1, "Training Details")])
+        every_text = " ".join(block["text"] for block in blocks)
+        for dropped in ("MNLI", "QNLI", "bsz", "84.6", "RoBERTa", "SST MRPC"):
+            self.assertNotIn(dropped, every_text)
+        self.assertTrue(any(block["text"].startswith("Setup. We use one learning rate") for block in blocks))
+        self.assertGreaterEqual(stats["filtered"]["table"], 5)
+        self.assertEqual(stats["heading_sources"], {"outline": 0, "font": 2})
+
     def test_two_columns_stamp_table_figure_text_and_fragments(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             pdf = write_pdf(Path(directory) / "two.pdf", [TWO_COLUMN_PAGE])
