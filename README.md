@@ -93,6 +93,8 @@ python plugins/obspaper/scripts/obs_paper.py nodes "/path/to/Project.canvas" rfp
 
 ## LaTeX
 
+After importing or editing a `paper_vN` Canvas group, run `python plugins/obspaper/scripts/obs_paper.py validate paper.canvas --paper-group paper_vN`. Plain `validate` checks only Canvas structure. The paper check catches raw LaTeX tables and itemize cards, inline citations, figures with no mention edge, and explicit references lacking edges. It cannot infer the exact destination of a `\ref` after its label has been removed from the displayed card, so check reference targets, colors, and rendered layout as well.
+
 `paper_tex.py` assembles a `paper_vN` group into a LaTeX body — abstract, headings whose depth comes from the card's colour, paragraphs from the 20/40px gaps, Markdown tables as `booktabs` tabulars, and image cards as figures. Section numbers and cross-references are generated, so the Canvas never states a number that could go stale. An artifact too wide for one column becomes a starred float.
 
 ```bash

@@ -2472,11 +2472,62 @@ def inspect_canvas(canvas: Path, target: dict[str, Any] | None = None) -> dict[s
     }
 
 
-def validate_canvas(canvas: Path) -> dict[str, Any]:
+def validate_canvas(canvas: Path, paper_group: str | None = None) -> dict[str, Any]:
     document = CanvasDocument.load(canvas)
+    if paper_group is not None:
+        group = document.resolve_group({"group_label": paper_group})
+        nodes = document.contained_non_groups(node_rect(group))
+        by_id = {node["id"]: node for node in nodes}
+        edges = [
+            edge for edge in document.edges
+            if edge["fromNode"] in by_id and edge["toNode"] in by_id
+        ]
+        outgoing: dict[str, set[str]] = {}
+        incoming: dict[str, set[str]] = {}
+        for edge in edges:
+            outgoing.setdefault(edge["fromNode"], set()).add(edge["toNode"])
+            incoming.setdefault(edge["toNode"], set()).add(edge["fromNode"])
+
+        problems: list[str] = []
+        for node in nodes:
+            node_id, body = node["id"], node.get("text", "")
+            if node.get("type") == "file" and not outgoing.get(node_id):
+                problems.append(f"{node_id}: figure has no mention edge")
+            if node.get("type") != "text":
+                continue
+            if re.search(r"\\begin\{table\*?\}", body):
+                problems.append(f"{node_id}: LaTeX table must be a Markdown table")
+            if r"\begin{itemize}" in body:
+                problems.append(f"{node_id}: LaTeX itemize must be split into cards")
+            if re.search(r"\\cite[tp]?(?:\[[^]]*\])?\{[^}]+\}", body):
+                first, *rest = body.strip().splitlines()
+                citation_card = re.fullmatch(r"~?\\cite[tp]?(?:\[[^]]*\])?\{[^}]+\}", first)
+                if not citation_card or any(not line.strip().startswith("[[") for line in rest if line.strip()) or not outgoing.get(node_id):
+                    problems.append(f"{node_id}: citation must be a linked side card")
+            labels = set(re.findall(r"\\(?:eqref|autoref|ref)\{([^}]+)\}", body))
+            heading_refs = {label for label in labels if label.startswith(("app:", "appendix:", "sec:"))}
+            table_refs = {label for label in labels if label.startswith("tab:")}
+            figure_refs = {label for label in labels if label.startswith("fig:")}
+            equation_refs = {label for label in labels if label.startswith("eq:")}
+            heading_targets = {target for target in outgoing.get(node_id, set()) if by_id[target].get("text", "").startswith("# ")}
+            artifact_sources = {
+                source for source in incoming.get(node_id, set())
+                if not re.match(r"^~?\\cite", by_id[source].get("text", ""))
+            }
+            if len(heading_targets) < len(heading_refs):
+                problems.append(f"{node_id}: {len(heading_refs) - len(heading_targets)} Appendix/section mention edge(s) missing")
+            tables = {source for source in artifact_sources if re.search(r"(?m)^\|\s*:?-{3,}", by_id[source].get("text", ""))}
+            equations = {source for source in artifact_sources if by_id[source].get("text", "").strip().startswith("$$")}
+            figures = artifact_sources - tables - equations
+            for kind, refs, sources in (("table", table_refs, tables), ("figure", figure_refs, figures), ("equation", equation_refs, equations)):
+                if len(sources) < len(refs):
+                    problems.append(f"{node_id}: {len(refs) - len(sources)} {kind} mention edge(s) missing")
+        if problems:
+            raise PlanError(f"paper group {paper_group!r} has {len(problems)} issue(s): " + "; ".join(problems))
     return {
         "status": "valid",
         "nodes": len(document.nodes),
         "edges": len(document.edges),
         "sha256": canvas_sha256(canvas),
+        **({"paper_group": paper_group} if paper_group is not None else {}),
     }

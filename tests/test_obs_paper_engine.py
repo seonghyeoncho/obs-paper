@@ -21,6 +21,7 @@ from obs_paper_engine import (  # noqa: E402
     estimate_text_height,
     inspect_canvas,
     node_rect,
+    validate_canvas,
 )
 
 
@@ -62,6 +63,45 @@ class ObsPaperEngineTest(unittest.TestCase):
         path = root / "paper.canvas"
         path.write_text(json.dumps(data), encoding="utf-8")
         return path
+
+    def test_paper_validation_catches_incomplete_import(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = {
+                "nodes": [
+                    {"id": "g", "type": "group", "label": "paper_v2", "x": 0, "y": 0, "width": 3000, "height": 2000},
+                    {"id": "title", "type": "text", "text": "# Paper", "color": "6", "x": 100, "y": 0, "width": 800, "height": 70},
+                    {"id": "mention", "type": "text", "text": r"Table~\ref{tab:a} and Appendix~\ref{app:a} describe this.", "x": 100, "y": 100, "width": 800, "height": 70},
+                    {"id": "table", "type": "text", "text": r"\begin{table}\begin{tabular}{c}A\end{tabular}\end{table}", "x": 1000, "y": 100, "width": 800, "height": 200},
+                    {"id": "appendix", "type": "text", "text": "# Details", "color": "6", "x": 2000, "y": 100, "width": 800, "height": 70},
+                    {"id": "figure", "type": "file", "file": "figure.png", "x": 1000, "y": 400, "width": 800, "height": 300},
+                    {"id": "list", "type": "text", "text": r"\begin{itemize}\item One\end{itemize}", "x": 100, "y": 200, "width": 800, "height": 70},
+                    {"id": "citation", "type": "text", "text": r"Prior work \cite{smith2024} agrees.", "x": 100, "y": 300, "width": 800, "height": 70},
+                ],
+                "edges": [],
+            }
+            canvas = self.write_canvas(Path(directory), data)
+            self.assertEqual(validate_canvas(canvas)["status"], "valid")
+            with self.assertRaises(PlanError) as raised:
+                validate_canvas(canvas, "paper_v2")
+            for issue in ("LaTeX table", "LaTeX itemize", "citation", "figure", "Appendix/section mention", "table mention"):
+                self.assertIn(issue, str(raised.exception))
+
+            data["nodes"][3]["text"] = "| A |\n| --- |\n| 1 |"
+            data["nodes"][6]["text"] = "One."
+            data["nodes"][7]["text"] = "\\cite{smith2024}\n[[Paper/Smith 2024|Paper flow]]"
+            data["edges"] = [
+                {"id": "table-edge", "fromNode": "table", "toNode": "mention"},
+                {"id": "appendix-edge", "fromNode": "mention", "toNode": "appendix"},
+                {"id": "figure-edge", "fromNode": "figure", "toNode": "mention"},
+                {"id": "citation-edge", "fromNode": "citation", "toNode": "mention"},
+            ]
+            self.write_canvas(Path(directory), data)
+            self.assertEqual(validate_canvas(canvas, "paper_v2")["status"], "valid")
+
+            data["nodes"][2]["text"] += r" Table~\ref{tab:b} adds another comparison."
+            self.write_canvas(Path(directory), data)
+            with self.assertRaisesRegex(PlanError, r"1 table mention edge\(s\) missing"):
+                validate_canvas(canvas, "paper_v2")
 
     def test_create_group_and_rerun_is_noop(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
