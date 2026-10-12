@@ -12,7 +12,7 @@ Treat each native `paper_vN` group as one manuscript-version workspace. The vers
 - Read `../../references/request-schema.md` before authoring a request.
 - Read `references/korean-prose.md` before writing or revising Korean manuscript prose. Its rules deliberately differ from the research-flow ones; layout-only work does not need it.
 - For supported paper operations, do not edit Canvas JSON directly. Use `../../scripts/obs_paper.py` with a schema-version-1 `paper` request.
-- Run `inspect` to resolve exact node IDs, `plan` to produce a SHA-bound patch, `apply` with the adjacent action log, and `validate` after writing. A second `plan` with the same request must contain zero operations.
+- Run `inspect` to resolve exact node IDs, `plan` to produce a SHA-bound patch, `apply` with the adjacent action log, and `validate <canvas> --paper-group paper_vN` after writing. A second `plan` with the same request must contain zero operations.
 - `group_appendix` requires the owning `paper_vN` group, the complete explicit member-node list, the section label, and normally 20px padding. If the computed group would capture any unlisted node, stop and correct the request rather than widening the group.
 - `insert_blocks` requires an exact anchor node, individually keyed text blocks, and the complete explicit list of downstream nodes that must move. Use `fit_group_id` when inserting into a section-owned Appendix group so its 20px boundary is recomputed. Tables and figures are not prose blocks and must wait for an outside-artifact handler.
 - Use `place_artifact`, `split_citation`, and `connect_reference` for side artifacts and explicit references; use `fit_section_title` after the section rectangle changes.
@@ -145,5 +145,7 @@ Verify after editing:
 - section titles span complete section rectangles and sibling sections do not overlap;
 - adjacent complete top-level section rectangles have exactly 120px horizontal gaps;
 - rerunning the deterministic transform makes no further changes.
+
+The paper-group validator is a preflight gate for imports as well as edits. It rejects raw LaTeX tables and itemize blocks, inline citation commands, figures without mention edges, and explicit references without enough edges in the required direction. It checks edge coverage rather than exact LaTeX label identity; inspect destinations, colors, and rendered alignment separately. Plain `validate` checks only Canvas structure and cannot certify a manuscript import.
 
 Append material layout, correction, validation, and blocker actions to the adjacent `CANVAS_ACTION_LOG.md` with `scripts/record_action.py`.

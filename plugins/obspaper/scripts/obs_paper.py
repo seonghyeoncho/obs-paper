@@ -72,6 +72,7 @@ def main() -> None:
 
     validate_parser = subparsers.add_parser("validate")
     validate_parser.add_argument("canvas", type=Path)
+    validate_parser.add_argument("--paper-group", help="also check paper card and mention conventions")
 
     init_parser = subparsers.add_parser("project-init")
     init_parser.add_argument("vault", type=Path)
@@ -133,7 +134,7 @@ def main() -> None:
                 emit(patch, args.patch_output)
             emit(apply_patch(args.canvas, patch, args.log))
         elif args.command == "validate":
-            emit(validate_canvas(args.canvas))
+            emit(validate_canvas(args.canvas, args.paper_group))
         elif args.command == "nodes":
             emit(read_nodes(args.canvas, args.node_ids), args.output)
         elif args.command == "project-init":
